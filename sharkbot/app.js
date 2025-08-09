@@ -1,13 +1,11 @@
-import fs from 'fs';
-
-const configRaw = fs.readFileSync('/data/options.json', 'utf8');
-const config = JSON.parse(configRaw);
-
 const express = require('express');
 const fs = require('fs');
 const yaml = require('js-yaml');
 const app = express();
 const port = 3000;
+
+const configRaw = fs.readFileSync('/data/options.json', 'utf8');
+const config = JSON.parse(configRaw);
 
 const prefix = config.prefix;
 const clientId = config.clientId;
