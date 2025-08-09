@@ -11,6 +11,11 @@ const token = process.env.TOKEN;
 const { exec } = require("child_process");
 const knope = require('knope');
 
+console.log('Prefix:', prefix);
+console.log('Client ID:', clientId);
+console.log('Guild ID:', guildId);
+console.log('Token:', token);
+
 // Require the necessary discord.js classes
 const { Client, Intents } = require('discord.js');
 
