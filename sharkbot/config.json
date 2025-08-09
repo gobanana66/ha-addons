@@ -1,0 +1,29 @@
+{
+  "slug": "sharkbot",
+  "name": "Shark Bot",
+  "version": "1.0.6",
+  "stage": "stable",
+  "description": "Shark!",
+  "arch": [
+    "armhf",
+    "armv7",
+    "aarch64",
+    "amd64",
+    "i386"
+  ],
+  "startup": "services",
+  "boot": "auto",
+  "ports": {
+    "3000/tcp": 3000
+  },
+  "map": [
+    "config:rw",
+    "ssl:rw",
+    "addons:rw",
+    "backup:rw",
+    "share:rw"
+  ],
+  "options": {},
+  "schema": {},
+  "secrets": ["secrets.yaml"]
+}
