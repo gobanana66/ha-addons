@@ -1,0 +1,17 @@
+{
+  "influxdb_version": "2",
+  "influxdb_url": "http://homeassistant.local:8086",
+  "influxdb_token": "YOUR_INFLUX_TOKEN",
+  "influxdb_org": "YOUR_ORG",
+  "influxdb_bucket": "YOUR_BUCKET",
+  "influxdb_host": "localhost",
+  "influxdb_port": 8086,
+  "influxdb_username": "",
+  "influxdb_password": "",
+  "client_id": "YOUR_CLIENT_ID",
+  "client_secret": "YOUR_CLIENT_SECRET",
+  "fitbit_token": "YOUR_REFRESH_TOKEN",
+  "devicename": "Charge5",
+  "local_timezone": "Automatic",
+  "google_form_url": ""
+}

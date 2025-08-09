@@ -1,0 +1,69 @@
+name: "Local Fitbit Fetch Data"
+version: "1.1.3"
+slug: "fitbit_fetch_data"
+description: "Add-on to fetch Fitbit data and store it in InfluxDB"
+url: "https://gitlab.fristerspace.de/demian/fitbit-ha-addon"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+init: false
+map:
+  - share:rw
+hassio_api: true
+hassio_role: default
+host_network: true
+auth_api: true
+stage: stable
+backup_exclude:
+  - "*.log"
+  - "tokens/*"
+
+options:
+  refresh_token: null
+  client_id: null
+  client_secret: null
+  devicename: "Fitbit"
+  local_timezone: "Automatic"
+  influxdb_version: "1"
+  # --- InfluxDB General ---
+  influxdb_url: "http://localhost:8086" # For v2 and v3
+  influxdb_database: "fitbit" # For v1 and v3
+  # --- InfluxDB v1 Specific ---
+  influxdb_host: "localhost"
+  influxdb_port: 8086
+  influxdb_username: ""
+  influxdb_password: ""
+  # --- InfluxDB v2 Specific ---
+  influxdb_bucket: ""
+  influxdb_org: ""
+  influxdb_token: ""
+  # --- InfluxDB v3 Specific ---
+  influxdb_v3_access_token: ""
+  google_form_url: ""
+
+schema:
+  refresh_token: str
+  client_id: str
+  client_secret: password
+  devicename: str
+  local_timezone: str
+  influxdb_version: list(1|2|3)
+  # --- InfluxDB General ---
+  influxdb_url: url?
+  influxdb_database: str?
+  # --- InfluxDB v1 Specific ---
+  influxdb_host: str?
+  influxdb_port: int?
+  influxdb_username: str?
+  influxdb_password: password?
+  # --- InfluxDB v2 Specific ---
+  influxdb_bucket: str?
+  influxdb_org: str?
+  influxdb_token: password?
+  # --- InfluxDB v3 Specific ---
+  influxdb_v3_access_token: password?
+  google_form_url: url?
