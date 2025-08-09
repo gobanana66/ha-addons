@@ -23,7 +23,16 @@
     "backup:rw",
     "share:rw"
   ],
-  "options": {},
-  "schema": {},
-  "secrets": ["secrets.yaml"]
+  "options": {
+    "prefix": "!",
+    "clientId": "",
+    "guildId": "",
+    "token": ""
+  },
+  "schema": {
+    "prefix": "str",
+    "clientId": "str",
+    "guildId": "str",
+    "token": "str"
+  }
 }

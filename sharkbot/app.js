@@ -4,10 +4,10 @@ const yaml = require('js-yaml');
 const app = express();
 const port = 3000;
 
-// Load secrets from secrets.yaml
-const secrets = yaml.load(fs.readFileSync('secrets.yaml', 'utf8'));
-
-
+const prefix = process.env.PREFIX;
+const clientId = process.env.CLIENTID;
+const guildId = process.env.GUILDID;
+const token = process.env.TOKEN;
 const { exec } = require("child_process");
 const knope = require('knope');
 
