@@ -1,7 +1,7 @@
 {
   "slug": "sharkbot",
   "name": "Shark Bot",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "stage": "stable",
   "description": "Shark!",
   "arch": [
@@ -11,18 +11,11 @@
     "amd64",
     "i386"
   ],
-  "startup": "services",
+  "startup": "application",
   "boot": "auto",
   "ports": {
     "3000/tcp": 3000
   },
-  "map": [
-    "config:rw",
-    "ssl:rw",
-    "addons:rw",
-    "backup:rw",
-    "share:rw"
-  ],
   "options": {
     "prefix": "!",
     "clientId": "",

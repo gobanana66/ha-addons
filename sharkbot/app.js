@@ -4,6 +4,9 @@ const yaml = require('js-yaml');
 const app = express();
 const port = 3000;
 
+console.log(process.env);
+
+
 const prefix = process.env.PREFIX;
 const clientId = process.env.CLIENTID;
 const guildId = process.env.GUILDID;
@@ -15,6 +18,17 @@ console.log('Prefix:', prefix);
 console.log('Client ID:', clientId);
 console.log('Guild ID:', guildId);
 console.log('Token:', token);
+
+console.log('Prefix:', process.env.PREFIX);
+console.log('Client ID:', process.env.CLIENTID);
+console.log('Guild ID:', process.env.GUILDID);
+console.log('Token:', process.env.TOKEN);
+
+if (!process.env.TOKEN) {
+  console.error('ERROR: TOKEN is required!');
+  process.exit(1);
+}
+
 
 // Require the necessary discord.js classes
 const { Client, Intents } = require('discord.js');
