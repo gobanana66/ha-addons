@@ -13,8 +13,6 @@ const knope = require('knope');
 
 // Require the necessary discord.js classes
 const { Client, Intents } = require('discord.js');
-const token = secrets.token;
-const prefix = secrets.prefix;
 
 // Create a new client instance
 const client = new Client({
