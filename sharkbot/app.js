@@ -1,16 +1,18 @@
+import fs from 'fs';
+
+const configRaw = fs.readFileSync('/data/options.json', 'utf8');
+const config = JSON.parse(configRaw);
+
 const express = require('express');
 const fs = require('fs');
 const yaml = require('js-yaml');
 const app = express();
 const port = 3000;
 
-console.log(process.env);
-
-
-const prefix = process.env.PREFIX;
-const clientId = process.env.CLIENTID;
-const guildId = process.env.GUILDID;
-const token = process.env.TOKEN;
+const prefix = config.prefix;
+const clientId = config.clientId;
+const guildId = config.guildId;
+const token = config.token;
 const { exec } = require("child_process");
 const knope = require('knope');
 
@@ -18,11 +20,6 @@ console.log('Prefix:', prefix);
 console.log('Client ID:', clientId);
 console.log('Guild ID:', guildId);
 console.log('Token:', token);
-
-console.log('Prefix:', process.env.PREFIX);
-console.log('Client ID:', process.env.CLIENTID);
-console.log('Guild ID:', process.env.GUILDID);
-console.log('Token:', process.env.TOKEN);
 
 if (!process.env.TOKEN) {
   console.error('ERROR: TOKEN is required!');
