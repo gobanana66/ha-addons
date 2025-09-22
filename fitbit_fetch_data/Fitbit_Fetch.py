@@ -409,28 +409,57 @@ def safe_to_utc(dt: datetime, timezone):
 # ## Selecting Dates for update
 
 # %%
-if MANUAL_DATE_RANGE_ENABLED:
-    try:
-        logging.info(f"Manual date range enabled: {MANUAL_START_DATE} to {MANUAL_END_DATE}")
-        start_date = datetime.strptime(MANUAL_START_DATE, "%Y-%m-%d")
-        end_date = datetime.strptime(MANUAL_END_DATE, "%Y-%m-%d")
-        start_date_str = start_date.strftime("%Y-%m-%d")
-        end_date_str = end_date.strftime("%Y-%m-%d")
-    except Exception:
-        logging.exception("Invalid manual date range provided; falling back to auto or interactive mode.")
-        MANUAL_DATE_RANGE_ENABLED = False
+def determine_date_range():
+    """Determine the start/end date range to use.
 
-if not MANUAL_DATE_RANGE_ENABLED:
+    Priority order:
+    1. Manual range via MANUAL_DATE_RANGE_ENABLED + MANUAL_START_DATE/MANUAL_END_DATE
+    2. Automatic range via AUTO_DATE_RANGE and auto_update_date_range
+    3. Interactive prompt (falls back to user input)
+
+    Returns: (start_date, end_date, start_date_str, end_date_str)
+    """
+    global MANUAL_DATE_RANGE_ENABLED
+
+    # 1) Manual range (explicit via add-on options / env vars)
+    if MANUAL_DATE_RANGE_ENABLED:
+        logging.info(f"Manual date range enabled: {MANUAL_START_DATE} to {MANUAL_END_DATE}")
+        try:
+            if not MANUAL_START_DATE or not MANUAL_END_DATE:
+                raise ValueError("Manual start_date or end_date is empty")
+            start_date = datetime.strptime(MANUAL_START_DATE, "%Y-%m-%d")
+            end_date = datetime.strptime(MANUAL_END_DATE, "%Y-%m-%d")
+            start_date_str = start_date.strftime("%Y-%m-%d")
+            end_date_str = end_date.strftime("%Y-%m-%d")
+            return start_date, end_date, start_date_str, end_date_str
+        except Exception:
+            logging.exception("Invalid manual date range provided; falling back to auto or interactive mode.")
+            # disable manual mode so we fall back to auto/interactive
+            MANUAL_DATE_RANGE_ENABLED = False
+
+    # 2) Automatic range
     if AUTO_DATE_RANGE:
         end_date = datetime.now(LOCAL_TIMEZONE)
         start_date = end_date - timedelta(days=auto_update_date_range)
         end_date_str = end_date.strftime("%Y-%m-%d")
         start_date_str = start_date.strftime("%Y-%m-%d")
-    else:
-        start_date_str = input("Enter start date in YYYY-MM-DD format : ")
-        end_date_str = input("Enter end date in YYYY-MM-DD format : ")
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+        return start_date, end_date, start_date_str, end_date_str
+
+    # 3) Interactive prompt (last resort)
+    while True:
+        try:
+            start_date_str = input("Enter start date in YYYY-MM-DD format : ")
+            end_date_str = input("Enter end date in YYYY-MM-DD format : ")
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+            return start_date, end_date, start_date_str, end_date_str
+        except Exception:
+            print("Invalid date format. Please use YYYY-MM-DD.")
+            continue
+
+
+# Determine working date range once at startup
+start_date, end_date, start_date_str, end_date_str = determine_date_range()
 
 # %% [markdown]
 # ## Setting up functions for Requesting data from server
