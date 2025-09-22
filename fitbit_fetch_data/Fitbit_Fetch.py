@@ -70,6 +70,11 @@ mfp_client = None
 # Update Google Sheet with weight data 
 GOOGLE_FORM_URL = os.environ.get("GOOGLE_FORM_URL")
 
+# Optional manual date range via addon config/env vars (added in config.yaml)
+MANUAL_DATE_RANGE_ENABLED = os.environ.get("MANUAL_DATE_RANGE_ENABLED", "false").lower() in ("1", "true", "yes")
+MANUAL_START_DATE = os.environ.get("MANUAL_START_DATE") or os.environ.get("MANUAL_START_DATE", "")
+MANUAL_END_DATE = os.environ.get("MANUAL_END_DATE") or os.environ.get("MANUAL_END_DATE", "")
+
 DEBUG_MODE = False
 
 COLLECTED_RECORDS_FILE_PATH = os.environ.get("COLLECTED_RECORDS_FILE_PATH") or "./debug"
@@ -365,17 +370,28 @@ def safe_to_utc(dt: datetime, timezone):
 # ## Selecting Dates for update
 
 # %%
-if AUTO_DATE_RANGE:
-    
-    end_date = datetime.now(LOCAL_TIMEZONE)
-    start_date = end_date - timedelta(days=auto_update_date_range)
-    end_date_str = end_date.strftime("%Y-%m-%d")
-    start_date_str = start_date.strftime("%Y-%m-%d")
-else:
-    start_date_str = input("Enter start date in YYYY-MM-DD format : ")
-    end_date_str = input("Enter end date in YYYY-MM-DD format : ")
-    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+if MANUAL_DATE_RANGE_ENABLED:
+    try:
+        logging.info(f"Manual date range enabled: {MANUAL_START_DATE} to {MANUAL_END_DATE}")
+        start_date = datetime.strptime(MANUAL_START_DATE, "%Y-%m-%d")
+        end_date = datetime.strptime(MANUAL_END_DATE, "%Y-%m-%d")
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+    except Exception:
+        logging.exception("Invalid manual date range provided; falling back to auto or interactive mode.")
+        MANUAL_DATE_RANGE_ENABLED = False
+
+if not MANUAL_DATE_RANGE_ENABLED:
+    if AUTO_DATE_RANGE:
+        end_date = datetime.now(LOCAL_TIMEZONE)
+        start_date = end_date - timedelta(days=auto_update_date_range)
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        start_date_str = start_date.strftime("%Y-%m-%d")
+    else:
+        start_date_str = input("Enter start date in YYYY-MM-DD format : ")
+        end_date_str = input("Enter end date in YYYY-MM-DD format : ")
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
 
 # %% [markdown]
 # ## Setting up functions for Requesting data from server

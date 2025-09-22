@@ -28,6 +28,10 @@ options:
   client_secret: null
   devicename: "Fitbit"
   local_timezone: "Automatic"
+  # Manual date range controls: when enabled, the addon will use these dates instead of auto/interactive mode
+  manual_date_range_enabled: false
+  manual_start_date: ""  # YYYY-MM-DD
+  manual_end_date: ""    # YYYY-MM-DD
   influxdb_version: "1"
   # --- InfluxDB General ---
   influxdb_url: "http://localhost:8086" # For v2 and v3
