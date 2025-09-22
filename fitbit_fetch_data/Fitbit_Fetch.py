@@ -308,14 +308,53 @@ def write_points_to_influxdb(points):
     def retry_write(write_func, description="InfluxDB write"):
         attempt = 0
         backoff = INITIAL_BACKOFF
+        import re
         while attempt < MAX_RETRIES:
             try:
                 write_func()
                 logging.info(f"{description} succeeded on attempt {attempt + 1}")
                 return
             except (InfluxDBError, InfluxDBClientError, ReadTimeout) as e:
+                msg = str(e)
+                logging.warning(f"{description} failed (attempt {attempt + 1}): {msg}")
+
+                # Handle InfluxDB field type conflicts by attempting to coerce the input fields
+                # Example error message:
+                # input field "goal" on measurement "Weight" is type integer, already exists as type float dropped=1
+                if 'field type conflict' in msg or 'input field' in msg and 'already exists as type' in msg:
+                    try:
+                        m = re.search(r'input field \"(?P<field>[^"]+)\".*is type (?P<input_type>\w+), already exists as type (?P<existing_type>\w+)', msg)
+                        if m:
+                            field = m.group('field')
+                            existing_type = m.group('existing_type')
+                            logging.info(f"Detected field type conflict for '{field}', existing type: {existing_type}. Attempting to coerce.")
+                            coerced = False
+                            for p in points:
+                                if isinstance(p, dict) and 'fields' in p and field in p['fields']:
+                                    val = p['fields'][field]
+                                    if val is None:
+                                        continue
+                                    try:
+                                        if existing_type.startswith('float'):
+                                            p['fields'][field] = float(val)
+                                        else:
+                                            # existing type likely integer
+                                            # Try to coerce to int safely
+                                            p['fields'][field] = int(float(val))
+                                        coerced = True
+                                    except Exception:
+                                        logging.exception(f"Failed to coerce field {field} value {val}")
+                            if coerced:
+                                logging.info("Retrying write after coercing field types to match existing schema.")
+                                attempt += 1
+                                time.sleep(backoff)
+                                backoff *= 2
+                                continue
+                    except Exception:
+                        logging.exception("Error while attempting to parse/handle InfluxDB field type conflict")
+
+                # generic retry on other transient errors
                 attempt += 1
-                logging.warning(f"{description} failed (attempt {attempt}): {e}")
                 time.sleep(backoff)
                 backoff *= 2
             except Exception as e:
@@ -808,7 +847,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
                 },
                 "fields": {
                     "weight": float(weight.get("weight", 0)),
-                    "goal": float(weight_goal.get("weight", 135)) if weight_goal and isinstance(weight_goal, dict) else 135,
+                    "goal": float(weight_goal.get("weight", 135.0)) if weight_goal and isinstance(weight_goal, dict) else 135.0,
                     "bmi": float(weight.get("bmi")) if weight.get("bmi") is not None else None,
                     "fat": float(weight.get("fat")) if weight.get("fat") is not None else None,
                 }
