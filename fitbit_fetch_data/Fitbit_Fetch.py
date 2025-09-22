@@ -51,7 +51,11 @@ client_id = os.environ.get("CLIENT_ID") or "your_application_client_ID" # Change
 client_secret = os.environ.get("CLIENT_SECRET") or "your_application_client_secret" # Change this to your client Secret
 DEVICENAME = os.environ.get("DEVICENAME") or "Your_Device_Name" # e.g. "Charge5"
 ACCESS_TOKEN = "" # Empty Global variable initialization, will be replaced with a functional access code later using the refresh code
-AUTO_DATE_RANGE = True # Automatically selects date range from todays date and update_date_range variable
+_auto_env = os.environ.get("AUTO_DATE_RANGE")
+if _auto_env is None:
+    AUTO_DATE_RANGE = True  # default behavior
+else:
+    AUTO_DATE_RANGE = str(_auto_env).lower() in ("1", "true", "yes")
 auto_update_date_range = 1 # Days to go back from today for AUTO_DATE_RANGE *** DO NOT go above 2 - otherwise may break rate limit ***
 LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE") or "Automatic" # set to "Automatic" for Automatic setup from User profile (if not mentioned here specifically).
 SCHEDULE_AUTO_UPDATE = True if AUTO_DATE_RANGE else False # Scheduling updates of data when script runs
@@ -69,11 +73,6 @@ mfp_client = None
 
 # Update Google Sheet with weight data 
 GOOGLE_FORM_URL = os.environ.get("GOOGLE_FORM_URL")
-
-# Optional manual date range via addon config/env vars (added in config.yaml)
-MANUAL_DATE_RANGE_ENABLED = os.environ.get("MANUAL_DATE_RANGE_ENABLED", "false").lower() in ("1", "true", "yes")
-MANUAL_START_DATE = os.environ.get("MANUAL_START_DATE") or os.environ.get("MANUAL_START_DATE", "")
-MANUAL_END_DATE = os.environ.get("MANUAL_END_DATE") or os.environ.get("MANUAL_END_DATE", "")
 
 DEBUG_MODE = False
 
@@ -308,53 +307,14 @@ def write_points_to_influxdb(points):
     def retry_write(write_func, description="InfluxDB write"):
         attempt = 0
         backoff = INITIAL_BACKOFF
-        import re
         while attempt < MAX_RETRIES:
             try:
                 write_func()
                 logging.info(f"{description} succeeded on attempt {attempt + 1}")
                 return
             except (InfluxDBError, InfluxDBClientError, ReadTimeout) as e:
-                msg = str(e)
-                logging.warning(f"{description} failed (attempt {attempt + 1}): {msg}")
-
-                # Handle InfluxDB field type conflicts by attempting to coerce the input fields
-                # Example error message:
-                # input field "goal" on measurement "Weight" is type integer, already exists as type float dropped=1
-                if 'field type conflict' in msg or 'input field' in msg and 'already exists as type' in msg:
-                    try:
-                        m = re.search(r'input field \"(?P<field>[^"]+)\".*is type (?P<input_type>\w+), already exists as type (?P<existing_type>\w+)', msg)
-                        if m:
-                            field = m.group('field')
-                            existing_type = m.group('existing_type')
-                            logging.info(f"Detected field type conflict for '{field}', existing type: {existing_type}. Attempting to coerce.")
-                            coerced = False
-                            for p in points:
-                                if isinstance(p, dict) and 'fields' in p and field in p['fields']:
-                                    val = p['fields'][field]
-                                    if val is None:
-                                        continue
-                                    try:
-                                        if existing_type.startswith('float'):
-                                            p['fields'][field] = float(val)
-                                        else:
-                                            # existing type likely integer
-                                            # Try to coerce to int safely
-                                            p['fields'][field] = int(float(val))
-                                        coerced = True
-                                    except Exception:
-                                        logging.exception(f"Failed to coerce field {field} value {val}")
-                            if coerced:
-                                logging.info("Retrying write after coercing field types to match existing schema.")
-                                attempt += 1
-                                time.sleep(backoff)
-                                backoff *= 2
-                                continue
-                    except Exception:
-                        logging.exception("Error while attempting to parse/handle InfluxDB field type conflict")
-
-                # generic retry on other transient errors
                 attempt += 1
+                logging.warning(f"{description} failed (attempt {attempt}): {e}")
                 time.sleep(backoff)
                 backoff *= 2
             except Exception as e:
@@ -409,57 +369,20 @@ def safe_to_utc(dt: datetime, timezone):
 # ## Selecting Dates for update
 
 # %%
-def determine_date_range():
-    """Determine the start/end date range to use.
-
-    Priority order:
-    1. Manual range via MANUAL_DATE_RANGE_ENABLED + MANUAL_START_DATE/MANUAL_END_DATE
-    2. Automatic range via AUTO_DATE_RANGE and auto_update_date_range
-    3. Interactive prompt (falls back to user input)
-
-    Returns: (start_date, end_date, start_date_str, end_date_str)
-    """
-    global MANUAL_DATE_RANGE_ENABLED
-
-    # 1) Manual range (explicit via add-on options / env vars)
-    if MANUAL_DATE_RANGE_ENABLED:
-        logging.info(f"Manual date range enabled: {MANUAL_START_DATE} to {MANUAL_END_DATE}")
-        try:
-            if not MANUAL_START_DATE or not MANUAL_END_DATE:
-                raise ValueError("Manual start_date or end_date is empty")
-            start_date = datetime.strptime(MANUAL_START_DATE, "%Y-%m-%d")
-            end_date = datetime.strptime(MANUAL_END_DATE, "%Y-%m-%d")
-            start_date_str = start_date.strftime("%Y-%m-%d")
-            end_date_str = end_date.strftime("%Y-%m-%d")
-            return start_date, end_date, start_date_str, end_date_str
-        except Exception:
-            logging.exception("Invalid manual date range provided; falling back to auto or interactive mode.")
-            # disable manual mode so we fall back to auto/interactive
-            MANUAL_DATE_RANGE_ENABLED = False
-
-    # 2) Automatic range
-    if AUTO_DATE_RANGE:
-        end_date = datetime.now(LOCAL_TIMEZONE)
-        start_date = end_date - timedelta(days=auto_update_date_range)
-        end_date_str = end_date.strftime("%Y-%m-%d")
-        start_date_str = start_date.strftime("%Y-%m-%d")
-        return start_date, end_date, start_date_str, end_date_str
-
-    # 3) Interactive prompt (last resort)
-    while True:
-        try:
-            start_date_str = input("Enter start date in YYYY-MM-DD format : ")
-            end_date_str = input("Enter end date in YYYY-MM-DD format : ")
-            start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-            end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
-            return start_date, end_date, start_date_str, end_date_str
-        except Exception:
-            print("Invalid date format. Please use YYYY-MM-DD.")
-            continue
-
-
-# Determine working date range once at startup
-start_date, end_date, start_date_str, end_date_str = determine_date_range()
+if AUTO_DATE_RANGE:
+    
+    end_date = datetime.now(LOCAL_TIMEZONE)
+    start_date = end_date - timedelta(days=auto_update_date_range)
+    end_date_str = end_date.strftime("%Y-%m-%d")
+    start_date_str = start_date.strftime("%Y-%m-%d")
+    # Debug/info logging to make startup behavior explicit
+    logging.info(f"AUTO_DATE_RANGE enabled: Using auto_update_date_range={auto_update_date_range} day(s). Start={start_date_str} End={end_date_str}")
+else:
+    start_date_str = input("Enter start date in YYYY-MM-DD format : ")
+    end_date_str = input("Enter end date in YYYY-MM-DD format : ")
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+    logging.info("AUTO_DATE_RANGE disabled: prompting for manual start/end dates. Ensure these are in YYYY-MM-DD format.")
 
 # %% [markdown]
 # ## Setting up functions for Requesting data from server
@@ -876,7 +799,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
                 },
                 "fields": {
                     "weight": float(weight.get("weight", 0)),
-                    "goal": float(weight_goal.get("weight", 135.0)) if weight_goal and isinstance(weight_goal, dict) else 135.0,
+                    "goal": float(weight_goal.get("weight", 135)) if weight_goal and isinstance(weight_goal, dict) else 135,
                     "bmi": float(weight.get("bmi")) if weight.get("bmi") is not None else None,
                     "fat": float(weight.get("fat")) if weight.get("fat") is not None else None,
                 }

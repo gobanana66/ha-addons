@@ -1,5 +1,5 @@
 name: "Local Fitbit Fetch Data"
-version: "1.1.8"
+version: "1.1.9"
 slug: "fitbit_fetch_data"
 description: "Add-on to fetch Fitbit data and store it in InfluxDB"
 url: "https://gitlab.fristerspace.de/demian/fitbit-ha-addon"
@@ -28,12 +28,7 @@ options:
   client_secret: null
   devicename: "Fitbit"
   local_timezone: "Automatic"
-  # Manual date range controls: when enabled, the addon will use these dates instead of auto/interactive mode
-  manual_date_range_enabled: false
-  # Enter dates in YYYY-MM-DD format. Example: 2023-01-01
-  # Note: Supervisor add-on UI does not provide a native date-picker control, so enter dates as text.
-  manual_start_date: ""  # YYYY-MM-DD (e.g. 2023-01-01)
-  manual_end_date: ""    # YYYY-MM-DD (e.g. 2023-01-31)
+  auto_date_range: ""
   influxdb_version: "1"
   # --- InfluxDB General ---
   influxdb_url: "http://localhost:8086" # For v2 and v3
@@ -57,10 +52,8 @@ schema:
   client_secret: password
   devicename: str
   local_timezone: str
-  # Manual date range options
-  manual_date_range_enabled: bool
-  manual_start_date: str?
-  manual_end_date: str?
+  # Toggle automatic date range selection. When false, the addon will prompt for start/end dates via logs/input.
+  auto_date_range: bool
   influxdb_version: list(1|2|3)
   # --- InfluxDB General ---
   influxdb_url: url?
