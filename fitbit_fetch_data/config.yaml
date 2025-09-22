@@ -1,5 +1,5 @@
 name: "Local Fitbit Fetch Data"
-version: "1.1.4"
+version: "1.1.5"
 slug: "fitbit_fetch_data"
 description: "Add-on to fetch Fitbit data and store it in InfluxDB"
 url: "https://gitlab.fristerspace.de/demian/fitbit-ha-addon"
