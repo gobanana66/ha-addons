@@ -60,10 +60,12 @@ EXPIRED_TOKEN_MAX_RETRY = 5
 SKIP_REQUEST_ON_SERVER_ERROR = True
 
 # # Get cookies from your browser for myfitnesspal.com
-# cj = browser_cookie3.firefox(domain_name='myfitnesspal.com')  # or .chrome(), etc.
+# # cj = browser_cookie3.firefox(domain_name='myfitnesspal.com')  # or .chrome(), etc.
 
 # # Authenticate MyFitnessPal client
-# mfp_client = myfitnesspal.Client(cookiejar=cj)
+# # mfp_client = myfitnesspal.Client(cookiejar=cj)
+# If MyFitnessPal integration isn't configured, keep a safe default to avoid NameError
+mfp_client = None
 
 # Update Google Sheet with weight data 
 GOOGLE_FORM_URL = os.environ.get("GOOGLE_FORM_URL")
@@ -206,9 +208,18 @@ def request_data_from_fitbit(url, headers={}, params={}, data={}, request_type="
                         logging.warning("Retry limit reached for server error : Skipping request -> " + url)
                         return None
             else:
+                # Treat 403 (permission denied for a resource like SPO2) as non-fatal: log and return None
                 logging.error("Fitbit API request failed. Status code: " + str(response.status_code) + " " + str(response.text))
                 print(f"Fitbit API request failed. Status code: {response.status_code}", response.text)
-                response.raise_for_status()
+                if response.status_code == 403:
+                    logging.warning("Permission denied (403) for this resource. Continuing without this data.")
+                    return None
+                try:
+                    response.raise_for_status()
+                except Exception:
+                    # If raise_for_status still raises, re-raise after logging
+                    logging.exception("Unhandled HTTP error from Fitbit API")
+                    raise
                 return None
 
         except ConnectionError as e:
@@ -745,6 +756,10 @@ def fetch_weight_logs(start_date_str, end_date_str):
         
 # Get food data from MFP
 def fetch_myfitnesspal_food(date):
+    if mfp_client is None:
+        logging.warning("MyFitnessPal client not configured; skipping fetch_myfitnesspal_food.")
+        return []
+
     day = mfp_client.get_date(date.year, date.month, date.day)
     foods = []
     for entry in day.entries:
