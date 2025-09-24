@@ -792,7 +792,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
                 },
                 "fields": {
                     "weight": float(weight.get("weight", 0)),
-                    "goal": int(float(weight_goal.get("weight", 130i))) if weight_goal and isinstance(weight_goal, dict) else 130i,
+                    "goal": int(float(weight_goal.get("weight", 130))) if weight_goal and isinstance(weight_goal, dict) else 130,
                     "bmi": float(weight.get("bmi")) if weight.get("bmi") is not None else None,
                     "fat": float(weight.get("fat")) if weight.get("fat") is not None else None,
                 }
