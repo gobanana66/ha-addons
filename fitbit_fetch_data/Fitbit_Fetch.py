@@ -797,6 +797,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
                     "fat": float(weight.get("fat")) if weight.get("fat") is not None else None,
                 }
             })
+            logging.info(f"{{weight}}")
             form_data = {
                 "entry.1406463651": end_date_str,  # Replace with the actual field ID and value
                 "entry.1062141579": weight.get("weight")
