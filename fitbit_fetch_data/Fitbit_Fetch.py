@@ -794,11 +794,11 @@ def fetch_weight_logs(start_date_str, end_date_str):
                 "fields": {
                     "weight": float(weight.get("weight", 0)),
                     "goal": int(float(weight_goal.get("weight", 130))) if weight_goal and isinstance(weight_goal, dict) else 130,
+                    "goal_float": float(weight_goal.get("weight", 130)) if weight_goal and isinstance(weight_goal, dict) else 130,
                     "bmi": float(weight.get("bmi")) if weight.get("bmi") is not None else None,
                     "fat": float(weight.get("fat")) if weight.get("fat") is not None else None,
                 }
             })
-            logging.info(f"Weight Goal is {int(float(weight_goal.get('weight', 131)))} lbs" if weight_goal and isinstance(weight_goal, dict) else "Weight Goal not set")
             form_data = {
                 "entry.1406463651": end_date_str,  # Replace with the actual field ID and value
                 "entry.1062141579": weight.get("weight")
