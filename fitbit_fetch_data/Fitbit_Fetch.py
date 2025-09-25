@@ -770,6 +770,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
     weight_data_list = weight_resp.get("weight") if isinstance(weight_resp, dict) else None
     weight_goal_resp = request_data_from_fitbit(f'https://api.fitbit.com/1/user/-/body/log/weight/goal.json')
     weight_goal = weight_goal_resp.get("goal") if isinstance(weight_goal_resp, dict) else None
+    logging.info(weight_goal)
     form_data = ''
 
     if not weight_data_list:
@@ -797,7 +798,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
                     "fat": float(weight.get("fat")) if weight.get("fat") is not None else None,
                 }
             })
-            logging.info(f"{{weight}}")
+            logging.info(f"Weight Goal is {int(float(weight_goal.get('weight', 131)))} lbs" if weight_goal and isinstance(weight_goal, dict) else "Weight Goal not set")
             form_data = {
                 "entry.1406463651": end_date_str,  # Replace with the actual field ID and value
                 "entry.1062141579": weight.get("weight")
