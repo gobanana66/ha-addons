@@ -12,8 +12,8 @@ import pytz
 
 # %%
 import base64, requests, time, json, pytz, logging, os, sys
-# import myfitnesspal
-# import browser_cookie3
+import myfitnesspal
+import browser_cookie3
 from requests.exceptions import ConnectionError
 from datetime import datetime, timedelta
 # for influxdb 1.x
@@ -24,7 +24,7 @@ from influxdb_client import InfluxDBClient as InfluxDBClient2
 from influxdb_client.client.exceptions import InfluxDBError
 from influxdb_client.client.write_api import SYNCHRONOUS
 from requests.exceptions import ReadTimeout
-#from mfp_sync import sync_mfp_to_fitbit, add_mfp_totals_to_influxdb
+from mfp_sync import sync_mfp_to_fitbit, add_mfp_totals_to_influxdb
 # %% [markdown]
 # ## Variables
 
@@ -872,19 +872,19 @@ if AUTO_DATE_RANGE:
         write_points_to_influxdb(debug_records)
     else:
         for date_str in date_list:
-            # sync_mfp_to_fitbit(date_str, ACCESS_TOKEN)
-            # mfp_totals = sync_mfp_to_fitbit(date_str, ACCESS_TOKEN)
-            # if mfp_totals:
-            #     add_mfp_totals_to_influxdb(
-            #         date_str,
-            #         mfp_totals,
-            #         device_name="MyFitnessPal",
-            #         influxdb_version=INFLUXDB_VERSION,
-            #         influxdb_write_api=influxdb_write_api,
-            #         influxdb_bucket=INFLUXDB_BUCKET,
-            #         influxdb_org=INFLUXDB_ORG,
-            #         influxdbclient=influxdbclient
-            #     )
+            sync_mfp_to_fitbit(date_str, ACCESS_TOKEN)
+            mfp_totals = sync_mfp_to_fitbit(date_str, ACCESS_TOKEN)
+            if mfp_totals:
+                add_mfp_totals_to_influxdb(
+                    date_str,
+                    mfp_totals,
+                    device_name="MyFitnessPal",
+                    influxdb_version=INFLUXDB_VERSION,
+                    influxdb_write_api=influxdb_write_api,
+                    influxdb_bucket=INFLUXDB_BUCKET,
+                    influxdb_org=INFLUXDB_ORG,
+                    influxdbclient=influxdbclient
+                )
             get_intraday_data_limit_1d(date_str, [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')]) # 2 queries x number of dates ( default 2)
         get_daily_data_limit_30d(start_date_str, end_date_str) # 3 queries
         get_daily_data_limit_100d(start_date_str, end_date_str) # 1 query
@@ -933,19 +933,19 @@ else:
     for date_range in yield_dates_with_gap(date_list, 28):
         do_bulk_update(get_daily_data_limit_30d, date_range[0], date_range[1])
     for single_day in date_list:
-        # sync_mfp_to_fitbit(single_day, ACCESS_TOKEN)
-        # mfp_totals = sync_mfp_to_fitbit(single_day, ACCESS_TOKEN)
-        # if mfp_totals:
-        #     add_mfp_totals_to_influxdb(
-        #         single_day,
-        #         mfp_totals,
-        #         device_name="MyFitnessPal",
-        #         influxdb_version=INFLUXDB_VERSION,
-        #         influxdb_write_api=influxdb_write_api,
-        #         influxdb_bucket=INFLUXDB_BUCKET,
-        #         influxdb_org=INFLUXDB_ORG,
-        #         influxdbclient=influxdbclient
-        #     )
+        sync_mfp_to_fitbit(single_day, ACCESS_TOKEN)
+        mfp_totals = sync_mfp_to_fitbit(single_day, ACCESS_TOKEN)
+        if mfp_totals:
+            add_mfp_totals_to_influxdb(
+                single_day,
+                mfp_totals,
+                device_name="MyFitnessPal",
+                influxdb_version=INFLUXDB_VERSION,
+                influxdb_write_api=influxdb_write_api,
+                influxdb_bucket=INFLUXDB_BUCKET,
+                influxdb_org=INFLUXDB_ORG,
+                influxdbclient=influxdbclient
+            )
         do_bulk_update(get_intraday_data_limit_1d, single_day, [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')])
     dump_collected_records_to_file(f"fitbit_collected_{start_date_str}_to_{end_date_str}.json")
     logging.info("Success : Bulk update complete for " + start_date_str + " to " + end_date_str)
@@ -963,21 +963,21 @@ if SCHEDULE_AUTO_UPDATE:
     schedule.every(1).hours.do( lambda : get_intraday_data_limit_1d((datetime.strptime(end_date_str, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d"), [('heart','HeartRate_Intraday','1sec'),('steps','Steps_Intraday','1min')] )) # Refilling any missing data on previous day end of night due to fitbit sync delay ( see issue #10 )
     schedule.every(20).minutes.do(get_battery_level) # Auto-refresh battery level
     schedule.every(3).hours.do(lambda: (get_daily_data_limit_30d(start_date_str, end_date_str)))
-    # def scheduled_sync_mfp_to_fitbit():
-    #     sync_mfp_to_fitbit(end_date_str, ACCESS_TOKEN)
-    #     mfp_totals = sync_mfp_to_fitbit(end_date_str, ACCESS_TOKEN)
-    #     if mfp_totals:
-    #         add_mfp_totals_to_influxdb(
-    #             end_date_str,
-    #             mfp_totals,
-    #             device_name="MyFitnessPal",
-    #             influxdb_version=INFLUXDB_VERSION,
-    #             influxdb_write_api=influxdb_write_api,
-    #             influxdb_bucket=INFLUXDB_BUCKET,
-    #             influxdb_org=INFLUXDB_ORG,
-    #             influxdbclient=influxdbclient
-    #         )
-    # schedule.every(3).hours.do(scheduled_sync_mfp_to_fitbit)
+    def scheduled_sync_mfp_to_fitbit():
+        sync_mfp_to_fitbit(end_date_str, ACCESS_TOKEN)
+        mfp_totals = sync_mfp_to_fitbit(end_date_str, ACCESS_TOKEN)
+        if mfp_totals:
+            add_mfp_totals_to_influxdb(
+                end_date_str,
+                mfp_totals,
+                device_name="MyFitnessPal",
+                influxdb_version=INFLUXDB_VERSION,
+                influxdb_write_api=influxdb_write_api,
+                influxdb_bucket=INFLUXDB_BUCKET,
+                influxdb_org=INFLUXDB_ORG,
+                influxdbclient=influxdbclient
+            )
+    schedule.every(3).hours.do(scheduled_sync_mfp_to_fitbit)
     schedule.every(4).hours.do(lambda : get_daily_data_limit_100d(start_date_str, end_date_str))
     schedule.every(1).hours.do( lambda : get_daily_data_limit_365d(start_date_str, end_date_str))
     schedule.every(6).hours.do(lambda : get_daily_data_limit_none(start_date_str, end_date_str))
