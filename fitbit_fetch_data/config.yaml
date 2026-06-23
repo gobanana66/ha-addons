@@ -1,7 +1,7 @@
 name: "Local Fitbit Fetch Data"
-version: "1.1.16"
+version: "1.1.15"
 slug: "fitbit_fetch_data"
-description: "Add-on to fetch Fitbit data and store it in InfluxDB"
+description: "Add-on to fetch Fitbit data and store it in InfluxDB2"
 url: "https://github.com/gobanana66/ha-addons/tree/main/fitbit_fetch_data"
 arch:
   - aarch64
