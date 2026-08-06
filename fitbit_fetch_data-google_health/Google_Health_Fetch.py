@@ -103,12 +103,13 @@ GHEALTH_SCOPES = [
 ACCESS_TOKEN = ""  # populated by Get_New_Access_Token() below
 
 # --- Debugging: Save/load collected_records to/from file ---
-def dump_collected_records_to_file(filename="collected_records.json"):
+def dump_collected_records_to_file(filename="collected_records.json", records=None):
+    records = collected_records if records is None else records
     os.makedirs(COLLECTED_RECORDS_FILE_PATH, exist_ok=True)
     full_path = os.path.join(COLLECTED_RECORDS_FILE_PATH, filename)
     with open(full_path, "w") as f:
-        json.dump(collected_records, f, indent=2)
-    logging.info(f"Dumped {len(collected_records)} records to {full_path}")
+        json.dump(records, f, indent=2)
+    logging.info(f"Dumped {len(records)} records to {full_path}")
 
 def load_collected_records_from_file(filename="collected_records.json"):
     full_path = os.path.join(COLLECTED_RECORDS_FILE_PATH, filename)
@@ -604,6 +605,16 @@ else:
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
 
 collected_records = []
+all_collected_records = []
+
+def flush_collected_records():
+    global collected_records, all_collected_records
+    if not collected_records:
+        return
+    batch = collected_records
+    all_collected_records.extend(batch)
+    collected_records = []
+    write_points_to_influxdb(batch)
 
 def update_working_dates():
     global end_date, start_date, end_date_str, start_date_str
@@ -1137,16 +1148,22 @@ if AUTO_DATE_RANGE:
     else:
         for date_str in date_list:
             get_intraday_data_limit_1d(date_str)
+            flush_collected_records()
         get_daily_data_limit_30d(start_date_str, end_date_str)
+        flush_collected_records()
         get_daily_data_limit_100d(start_date_str, end_date_str)
+        flush_collected_records()
         get_daily_data_limit_365d(start_date_str, end_date_str)
+        flush_collected_records()
         get_daily_data_limit_none(start_date_str, end_date_str)
+        flush_collected_records()
         fetch_weight_logs(start_date_str, end_date_str)
+        flush_collected_records()
         fetch_latest_activities(end_date_str)
+        flush_collected_records()
         get_battery_level()
-        dump_collected_records_to_file(f"collected_{start_date_str}_to_{end_date_str}.json")
-        write_points_to_influxdb(collected_records)
-        collected_records = []
+        flush_collected_records()
+        dump_collected_records_to_file(f"collected_{start_date_str}_to_{end_date_str}.json", records=all_collected_records)
 else:
     # Bulk backfill mode -------------------------------------------------------
     schedule.every(50).minutes.do(lambda: Get_New_Access_Token(CLIENT_ID, CLIENT_SECRET))
@@ -1165,16 +1182,13 @@ else:
             yield (date_list[start_index], date_list[end_index])
 
     def do_bulk_update(funcname, start_date, end_date):
-        global collected_records
         funcname(start_date, end_date)
         schedule.run_pending()
-        write_points_to_influxdb(collected_records)
-        collected_records = []
+        flush_collected_records()
 
     do_bulk_update(fetch_weight_logs, date_list[0], date_list[-1])
     fetch_latest_activities(date_list[-1], lookback_days=(end_date - start_date).days + 1)
-    write_points_to_influxdb(collected_records)
-    collected_records = []
+    flush_collected_records()
     do_bulk_update(get_daily_data_limit_none, date_list[0], date_list[-1])
     # heart-rate / total-calories have a 14-day max range; keep chunks small.
     for date_range in yield_dates_with_gap(date_list, 14):
@@ -1202,14 +1216,13 @@ if SCHEDULE_AUTO_UPDATE:
     schedule.every(4).hours.do(lambda: get_daily_data_limit_100d(start_date_str, end_date_str))
     schedule.every(1).hours.do(lambda: get_daily_data_limit_365d(start_date_str, end_date_str))
     schedule.every(6).hours.do(lambda: get_daily_data_limit_none(start_date_str, end_date_str))
-    schedule.every(1).hours.do(lambda: fetch_latest_activities(end_date_str))
+    schedule.every(6).hours.do(lambda: fetch_latest_activities(end_date_str))
     schedule.every(5).hours.do(lambda: fetch_weight_logs(start_date_str, end_date_str))
     schedule.every(20).minutes.do(get_battery_level)
 
     while True:
         schedule.run_pending()
         if len(collected_records) != 0:
-            write_points_to_influxdb(collected_records)
-            collected_records = []
+            flush_collected_records()
         time.sleep(30)
         update_working_dates()
