@@ -1118,7 +1118,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
             },
         })
         form_data = {
-            "entry.1406463651": end_date_str,
+            "entry.1406463651": utc_time,
             "entry.1062141579": weight_lb,
         }
 
