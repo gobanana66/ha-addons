@@ -1,4 +1,4 @@
-name: "Local Google Health Fetch Data"
+name: "Local Google Health Fetch Data - Fitbit API Migration"
 version: "2.0.0"
 slug: "fitbit_fetch_data"
 description: "Add-on to fetch Fitbit/Pixel data via the Google Health API and store it in InfluxDB"
