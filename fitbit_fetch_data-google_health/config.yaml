@@ -1,0 +1,74 @@
+name: "Local Google Health Fetch Data"
+version: "2.0.0"
+slug: "fitbit_fetch_data"
+description: "Add-on to fetch Fitbit/Pixel data via the Google Health API and store it in InfluxDB"
+url: "https://gitlab.fristerspace.de/demian/fitbit-ha-addon"
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+startup: application
+init: false
+map:
+  - share:rw
+hassio_api: true
+hassio_role: default
+host_network: true
+auth_api: true
+stage: stable
+backup_exclude:
+  - "*.log"
+  - "tokens/*"
+
+options:
+  # refresh_token / client_id / client_secret are now GOOGLE OAuth 2.0 values
+  # from your Google Cloud project (not Fitbit). See MIGRATION.md.
+  refresh_token: null
+  client_id: null
+  client_secret: null
+  devicename: "Fitbit"
+  local_timezone: "Automatic"
+  auto_date_range: ""
+  influxdb_version: "1"
+  # --- InfluxDB General ---
+  influxdb_url: "http://localhost:8086" # For v2 and v3
+  influxdb_database: "fitbit" # For v1 and v3
+  # --- InfluxDB v1 Specific ---
+  influxdb_host: "localhost"
+  influxdb_port: 8086
+  influxdb_username: ""
+  influxdb_password: ""
+  # --- InfluxDB v2 Specific ---
+  influxdb_bucket: ""
+  influxdb_org: ""
+  influxdb_token: ""
+  # --- InfluxDB v3 Specific ---
+  influxdb_v3_access_token: ""
+  google_form_url: ""
+
+schema:
+  refresh_token: str
+  client_id: str
+  client_secret: password
+  devicename: str
+  local_timezone: str
+  # Toggle automatic date range selection. When false, the addon will prompt for start/end dates via logs/input.
+  auto_date_range: bool
+  influxdb_version: list(1|2|3)
+  # --- InfluxDB General ---
+  influxdb_url: url?
+  influxdb_database: str?
+  # --- InfluxDB v1 Specific ---
+  influxdb_host: str?
+  influxdb_port: int?
+  influxdb_username: str?
+  influxdb_password: password?
+  # --- InfluxDB v2 Specific ---
+  influxdb_bucket: str?
+  influxdb_org: str?
+  influxdb_token: password?
+  # --- InfluxDB v3 Specific ---
+  influxdb_v3_access_token: password?
+  google_form_url: url?
