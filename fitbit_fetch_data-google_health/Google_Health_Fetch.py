@@ -529,7 +529,27 @@ def debug_dump_points(points):
     logging.info(f"[DEBUG_LOCAL] Appended {len(points)} records to {fname}")
 
 
+def _strip_none_fields(points):
+    """Drop None-valued fields (and points left with no fields).
+
+    InfluxDB infers a field's type from the first value it sees and rejects
+    later writes of a different type ("field type conflict"). A null field can
+    be inferred inconsistently, so we never send None values.
+    """
+    cleaned = []
+    for p in points:
+        fields = {k: v for k, v in (p.get("fields") or {}).items() if v is not None}
+        if not fields:
+            continue
+        np = dict(p)
+        np["fields"] = fields
+        cleaned.append(np)
+    return cleaned
+
 def write_points_to_influxdb(points):
+    if not points:
+        return
+    points = _strip_none_fields(points)
     if not points:
         return
     if DEBUG_LOCAL:
@@ -1088,55 +1108,78 @@ def get_daily_data_limit_none(start_date_str, end_date_str):
 
 
 # Recent workouts -> Activity Records (exercise Session kind)
-def fetch_latest_activities(end_date_str, lookback_days=30):
+# exercise sessions can't be time-filtered server-side, so we list them (newest
+# first) and stop paging as soon as we pass the lookback window - otherwise we'd
+# walk the user's entire workout history every call and exhaust the rate limit.
+MAX_EXERCISE_PAGES = 5
+
+def fetch_latest_activities(end_date_str, lookback_days=7, max_pages=MAX_EXERCISE_PAGES):
     end_bound = LOCAL_TIMEZONE.localize(datetime.fromisoformat(end_date_str + "T00:00:00")) + timedelta(days=1)
     start_bound = end_bound - timedelta(days=lookback_days)
-    # exercise sessions don't support time-range filtering; list recent sessions
-    # and window them client-side by start time.
-    exercises = gh_list("exercise", start_bound, end_bound, use_filter=False)
+
     kept = 0
-    for p in exercises:
-        ex = p.get("exercise", {})
-        interval = ex.get("interval", {})
-        s_start = _first(interval, "startTime")
-        if not s_start:
-            continue
-        s_dt = datetime.fromisoformat(s_start.replace("Z", "+00:00"))
-        if not (start_bound <= s_dt < end_bound):
-            continue
-        # Skip empty-metrics duplicates (e.g. a manual Health Connect copy of a
-        # workout the watch already logged with full metrics).
-        metrics = ex.get("metricsSummary", {})
-        if not metrics:
-            continue
-        kept += 1
-        fields = {}
-        active_duration = _first(ex, "activeDuration")
-        if active_duration:
-            # e.g. "1800s"
-            try:
-                fields['ActiveDuration'] = float(str(active_duration).rstrip("s")) * 1000.0  # ms, matching original
-            except ValueError:
-                pass
-        avg_hr = _to_float(_first(metrics, "averageHeartRateBeatsPerMinute"))
-        if avg_hr is not None:
-            fields['AverageHeartRate'] = avg_hr
-        cal = _to_float(_first(metrics, "caloriesKcal"))
-        if cal is not None:
-            fields['calories'] = cal
-        dist_mm = _to_float(_first(metrics, "distanceMillimeters"))
-        if dist_mm is not None:
-            fields['distance'] = dist_mm / 1e6  # km
-        steps = _to_float(_first(metrics, "steps"))
-        if steps is not None:
-            fields['steps'] = steps
-        collected_records.append({
-            "measurement": "Activity Records",
-            "time": parse_physical_time({"physicalTime": s_start}),
-            "tags": {"ActivityName": _first(ex, "displayName", "exerciseType", default="Workout")},
-            "fields": fields,
-        })
-    logging.info(f"Recorded {kept} workouts (of {len(exercises)} listed) within {lookback_days}d before {end_date_str}")
+    scanned = 0
+    pages = 0
+    page_token = None
+    stop = False
+    while not stop and pages < max_pages:
+        params = {"pageSize": "100"}
+        if page_token:
+            params["pageToken"] = page_token
+        resp = request_data_from_ghealth(f"{GHEALTH_BASE}/dataTypes/exercise/dataPoints", params=params)
+        if not resp:
+            break
+        pages += 1
+        dps = resp.get("dataPoints", []) or []
+        for p in dps:
+            scanned += 1
+            ex = p.get("exercise", {})
+            s_start = _first(ex.get("interval", {}), "startTime")
+            if not s_start:
+                continue
+            s_dt = datetime.fromisoformat(s_start.replace("Z", "+00:00"))
+            if s_dt < start_bound:
+                # list is newest-first; once we're older than the window, the
+                # rest is older too - finish this page then stop paging.
+                stop = True
+                continue
+            if s_dt >= end_bound:
+                continue
+            # Skip empty-metrics duplicates (e.g. a manual Health Connect copy of
+            # a workout the watch already logged with full metrics).
+            metrics = ex.get("metricsSummary", {})
+            if not metrics:
+                continue
+            fields = {}
+            active_duration = _first(ex, "activeDuration")
+            if active_duration:
+                try:
+                    fields['ActiveDuration'] = float(str(active_duration).rstrip("s")) * 1000.0  # ms
+                except ValueError:
+                    pass
+            avg_hr = _to_float(_first(metrics, "averageHeartRateBeatsPerMinute"))
+            if avg_hr is not None:
+                fields['AverageHeartRate'] = avg_hr
+            cal = _to_float(_first(metrics, "caloriesKcal"))
+            if cal is not None:
+                fields['calories'] = cal
+            dist_mm = _to_float(_first(metrics, "distanceMillimeters"))
+            if dist_mm is not None:
+                fields['distance'] = dist_mm / 1e6  # km
+            steps = _to_float(_first(metrics, "steps"))
+            if steps is not None:
+                fields['steps'] = steps
+            collected_records.append({
+                "measurement": "Activity Records",
+                "time": parse_physical_time({"physicalTime": s_start}),
+                "tags": {"ActivityName": _first(ex, "displayName", "exerciseType", default="Workout")},
+                "fields": fields,
+            })
+            kept += 1
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    logging.info(f"Recorded {kept} workouts (scanned {scanned} over {pages} page(s)) within {lookback_days}d before {end_date_str}")
 
 
 # Weight -> Weight (weight, bmi, fat). goal has no Google Health equivalent.
@@ -1175,7 +1218,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
         if goal_numeric is None and WEIGHT_GOAL_LB is not None:
             goal_numeric = WEIGHT_GOAL_LB
 
-        weight_lb = kg * 2.20462 if kg is not None else None
+        weight_lb = float(kg * 2.20462) if kg is not None else None
 
         collected_records.append({
             "measurement": "Weight",
@@ -1184,7 +1227,9 @@ def fetch_weight_logs(start_date_str, end_date_str):
             "fields": {
                 "weight": weight_lb,
                 # Use the configured fallback when Google Health does not provide a goal.
-                "goal": goal_numeric,
+                # 'goal' is an INTEGER in the existing InfluxDB schema; keep it int to
+                # avoid a field-type conflict. 'goal_float' carries the float value.
+                "goal": int(round(goal_numeric)) if goal_numeric is not None else None,
                 "goal_float": goal_numeric,
                 "bmi": None,
                 "fat": fat_by_day.get(utc_time[:10]),
@@ -1261,7 +1306,7 @@ else:
         flush_collected_records()
 
     do_bulk_update(fetch_weight_logs, date_list[0], date_list[-1])
-    fetch_latest_activities(date_list[-1], lookback_days=(end_date - start_date).days + 1)
+    fetch_latest_activities(date_list[-1], lookback_days=(end_date - start_date).days + 1, max_pages=500)
     flush_collected_records()
     do_bulk_update(get_daily_data_limit_none, date_list[0], date_list[-1])
     # heart-rate / total-calories have a 14-day max range; keep chunks small.

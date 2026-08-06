@@ -1,5 +1,5 @@
 name: "Google Health Fetch Data - Fitbit Migration"
-version: "2.0.3"
+version: "2.0.4"
 slug: "google_health_fetch_data"
 description: "Add-on to fetch Fitbit/Pixel data via the Google Health API and store it in InfluxDB"
 url: "https://gitlab.fristerspace.de/demian/fitbit-ha-addon"
