@@ -7,7 +7,7 @@
 This repository contains the following add-ons
 
 ### [Fitbit to InfluxDB](./fitbit_fetch_data)
-### [Google Health Fetch Data - Fitbit Migration](./fitbit_fetch_data-google-health)
+### [Google Health Fetch Data - Fitbit Migration](./fitbit_fetch_data-google_health)
 ### [SharkBot](./sharkbot)
 
 ![Supports aarch64 Architecture][aarch64-shield]
