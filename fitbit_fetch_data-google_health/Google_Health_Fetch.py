@@ -1117,8 +1117,9 @@ def fetch_weight_logs(start_date_str, end_date_str):
                 "fat": fat_by_day.get(utc_time[:10]),
             },
         })
+        weight_date = utc_time[:10] if utc_time else None
         form_data = {
-            "entry.1406463651": utc_time,
+            "entry.1406463651": weight_date,
             "entry.1062141579": weight_lb,
         }
 
