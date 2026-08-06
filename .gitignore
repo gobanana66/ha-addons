@@ -1,5 +1,4 @@
 sharkbot/secrets.yaml
-
-# macOS metadata
 .DS_Store
-**/.DS_Store
+.DS_Store
+fitbit_fetch_data-google_health/.DS_Store
