@@ -981,19 +981,22 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
         logging.info(f"Recorded calories for {start_date_str} to {end_date_str}")
 
     # --- Active Zone Minutes -> Active Zone Minutes (dailyRollUp) ---
-    # Field name best-effort (ActiveZoneMinutesRollupValue) - verify in Postman.
+    # ActiveZoneMinutesRollupValue is broken out per HR zone (int64 strings);
+    # the daily total is their sum, with the breakdown kept as extra fields.
     azm_rollups = gh_daily_rollup("active-zone-minutes", start_dt, end_dt)
     for p in azm_rollups:
         azm = p.get("activeZoneMinutes", {})
-        val = _to_float(_first(azm, "totalMinutes", "minutesSum", "activeZoneMinutesSum", "minutes", "value"))
         date_obj = p.get("civilStartTime", {}).get("date")
-        if val is None or not date_obj:
+        if not date_obj:
             continue
+        fat = _to_float(_first(azm, "sumInFatBurnHeartZone"), 0.0)
+        cardio = _to_float(_first(azm, "sumInCardioHeartZone"), 0.0)
+        peak = _to_float(_first(azm, "sumInPeakHeartZone"), 0.0)
         collected_records.append({
             "measurement": "Active Zone Minutes",
             "time": daily_date_to_utc(date_obj),
             "tags": {"Device": DEVICENAME},
-            "fields": {"value": val},
+            "fields": {"value": fat + cardio + peak, "fatBurn": fat, "cardio": cardio, "peak": peak},
         })
     if azm_rollups:
         logging.info(f"Recorded Active Zone Minutes for {start_date_str} to {end_date_str}")

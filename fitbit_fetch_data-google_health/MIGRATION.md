@@ -111,7 +111,7 @@ float in code. Daily types carry `date` as a nested `{year, month, day}` object.
 | `Activity Minutes` | `activity-level` | **reconcile** | `activityLevel.activityLevelType` (SEDENTARY/LIGHTLY_ACTIVE/MODERATELY_ACTIVE/VERY_ACTIVE), summed per day ✅ |
 | `distance` / `Total Steps` | `distance` / `steps` | **reconcile** (summed per day) | `distance.millimeters`÷1e6, `steps.count` ✅ |
 | `calories` (daily total) | `total-calories` | **dailyRollUp (POST)** | `rollupDataPoints[].totalCalories.kcalSum` ✅ (verified via reference; POST body = CivilTimeInterval `range`) |
-| `Active Zone Minutes` | `active-zone-minutes` | dailyRollUp (POST) | value field best-effort, **unverified** |
+| `Active Zone Minutes` | `active-zone-minutes` | dailyRollUp (POST) | per-zone `sumInFatBurnHeartZone`/`sumInCardioHeartZone`/`sumInPeakHeartZone` summed to `value` ✅ |
 | `VO2Max` | `daily-vo2-max` | list | value field best-effort, **unverified** |
 | `HR zones` | `daily-heart-rate-zones` | **reconcile** | field names best-effort, **unverified** (no live sample seen) |
 
