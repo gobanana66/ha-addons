@@ -73,6 +73,11 @@ SKIP_REQUEST_ON_SERVER_ERROR = True
 
 # Optional weight sync to a Google Form (unchanged from the original addon)
 GOOGLE_FORM_URL = os.environ.get("GOOGLE_FORM_URL")
+WEIGHT_GOAL_LB = os.environ.get("WEIGHT_GOAL_LB", "")
+try:
+    WEIGHT_GOAL_LB = float(WEIGHT_GOAL_LB) if str(WEIGHT_GOAL_LB).strip() else None
+except (TypeError, ValueError):
+    WEIGHT_GOAL_LB = None
 
 DEBUG_MODE = False
 COLLECTED_RECORDS_FILE_PATH = os.environ.get("COLLECTED_RECORDS_FILE_PATH") or "./debug"
@@ -1080,23 +1085,30 @@ def fetch_weight_logs(start_date_str, end_date_str):
             kg = (grams / 1000.0) if grams is not None else None
         if utc_time is None or kg is None:
             continue
+
+        goal_value = _first(w, "goal", "goalKilograms", "goalWeightKilograms", "goalWeight", "weightGoal", default=None)
+        goal_numeric = _to_float(goal_value)
+        if goal_numeric is None and WEIGHT_GOAL_LB is not None:
+            goal_numeric = WEIGHT_GOAL_LB
+
+        weight_lb = kg * 2.20462 if kg is not None else None
+
         collected_records.append({
             "measurement": "Weight",
             "time": utc_time,
             "tags": {"Device": DEVICENAME},
             "fields": {
                 "weight": kg,
-                # goal / bmi are not exposed by Google Health; kept null so the
-                # InfluxDB field set stays compatible with old dashboards.
-                "goal": None,
-                "goal_float": None,
+                # Use the configured fallback when Google Health does not provide a goal.
+                "goal": goal_numeric,
+                "goal_float": goal_numeric,
                 "bmi": None,
                 "fat": fat_by_day.get(utc_time[:10]),
             },
         })
         form_data = {
             "entry.1406463651": end_date_str,
-            "entry.1062141579": kg,
+            "entry.1062141579": weight_lb,
         }
 
     if GOOGLE_FORM_URL and form_data:

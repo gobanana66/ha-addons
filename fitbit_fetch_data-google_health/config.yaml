@@ -48,6 +48,7 @@ options:
   # --- InfluxDB v3 Specific ---
   influxdb_v3_access_token: ""
   google_form_url: ""
+  weight_goal_lb: null
   # Local debug: fetch from Google Health but skip InfluxDB (dump to file/console)
   debug_local: true
 
@@ -76,4 +77,5 @@ schema:
   # --- InfluxDB v3 Specific ---
   influxdb_v3_access_token: password?
   google_form_url: url?
+  weight_goal_lb: float?
   debug_local: bool?

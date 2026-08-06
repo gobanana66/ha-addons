@@ -15,5 +15,6 @@
   "local_timezone": "Automatic",
   "auto_date_range": true,
   "auto_update_date_range": 1,
-  "google_form_url": ""
+  "google_form_url": "",
+  "weight_goal_lb": 160
 }
