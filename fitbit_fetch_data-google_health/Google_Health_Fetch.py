@@ -19,6 +19,7 @@ import schedule
 import requests
 import json
 import pytz
+from collections import Counter
 from urllib.parse import urlencode
 from requests.exceptions import ConnectionError, ReadTimeout
 from datetime import datetime, timedelta
@@ -59,7 +60,7 @@ CLIENT_SECRET = os.environ.get("CLIENT_SECRET") or "your_google_oauth_client_sec
 
 DEVICENAME = os.environ.get("DEVICENAME") or "Your_Device_Name"  # e.g. "Charge5" (used as an InfluxDB tag only)
 
-AUTO_DATE_RANGE = True  # Automatically selects date range from today's date and auto_update_date_range
+AUTO_DATE_RANGE = False  # Automatically selects date range from today's date and auto_update_date_range
 auto_update_date_range = 1  # Days to go back from today for AUTO_DATE_RANGE. Keep this small (<=2).
 LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE") or "Automatic"
 SCHEDULE_AUTO_UPDATE = True if AUTO_DATE_RANGE else False
@@ -72,6 +73,13 @@ GOOGLE_FORM_URL = os.environ.get("GOOGLE_FORM_URL")
 
 DEBUG_MODE = False
 COLLECTED_RECORDS_FILE_PATH = os.environ.get("COLLECTED_RECORDS_FILE_PATH") or "./debug"
+
+# Local debug mode: run the real Google Health fetch + auth, but DO NOT touch
+# InfluxDB. Records are summarized to the console and appended to a JSONL dump
+# file instead of being written. Handy for testing locally without a running
+# InfluxDB, and for inspecting what the API returns. Toggle with the DEBUG_LOCAL
+# env var (wired to the addon's debug_local option).
+DEBUG_LOCAL = str(os.environ.get("DEBUG_LOCAL", "")).strip().lower() in ("1", "true", "yes", "on")
 
 # --- Google Health API constants ---
 GHEALTH_BASE = "https://health.googleapis.com/v4/users/me"
@@ -250,12 +258,73 @@ def _first(d, *keys, default=None):
             return d[k]
     return default
 
-def gh_list(data_type, start_dt, end_dt, extra_params=None):
+# The list/rollup endpoints filter with an AIP-160 "filter" expression, not
+# startTime/endTime query params. The field path depends on the data type's
+# "kind": Interval -> interval.start_time, Sample -> sample_time.physical_time,
+# Session -> interval.end_time, Daily -> date. The data type inside the filter
+# must be snake_case (e.g. heart_rate), even though the URL path is kebab-case.
+FILTER_KIND = {
+    # Sample
+    "heart-rate": "sample",
+    "oxygen-saturation": "sample",
+    "weight": "sample",
+    "body-fat": "sample",
+    "heart-rate-variability": "sample",
+    "respiratory-rate-sleep-summary": "sample",
+    # Interval
+    "steps": "interval",
+    "distance": "interval",
+    "activity-level": "interval",
+    "active-zone-minutes": "interval",
+    "total-calories": "interval",
+    "sedentary-period": "interval",
+    "time-in-heart-rate-zone": "interval",
+    # Session
+    "sleep": "session",
+    "exercise": "session",
+    # Daily
+    "daily-heart-rate-variability": "daily",
+    "daily-respiratory-rate": "daily",
+    "daily-sleep-temperature-derivations": "daily",
+    "daily-resting-heart-rate": "daily",
+    "daily-oxygen-saturation": "daily",
+    "daily-heart-rate-zones": "daily",
+    "daily-vo2-max": "daily",
+}
+
+def build_filter(data_type, start_dt, end_dt):
+    """Build the AIP-160 filter string for a data type over [start_dt, end_dt)."""
+    snake = data_type.replace("-", "_")
+    kind = FILTER_KIND.get(data_type, "sample")
+    if kind == "interval":
+        field = f"{snake}.interval.start_time"
+    elif kind == "session":
+        # sleep filters on interval.end_time; exercise on interval.start_time.
+        sub = "interval.start_time" if data_type == "exercise" else "interval.end_time"
+        field = f"{snake}.{sub}"
+    elif kind == "daily":
+        field = f"{snake}.date"
+    else:  # sample
+        field = f"{snake}.sample_time.physical_time"
+
+    if kind == "daily":
+        # Daily records carry a civil date (YYYY-MM-DD), not a timestamp. The
+        # date member only supports the >= and < comparators, so the upper
+        # bound is exclusive (end_dt is already the day AFTER the last day).
+        start_str = start_dt.strftime("%Y-%m-%d")
+        end_str = end_dt.strftime("%Y-%m-%d")
+        return f'{field} >= "{start_str}" AND {field} < "{end_str}"'
+    return f'{field} >= "{_iso_z(start_dt)}" AND {field} < "{_iso_z(end_dt)}"'
+
+def gh_list(data_type, start_dt, end_dt, extra_params=None, use_filter=True):
     """List raw data points for a data type over [start_dt, end_dt).
 
-    Uses the documented list form:
-      GET .../dataTypes/{type}/dataPoints?startTime=&endTime=&pageSize=
+    Uses the AIP-160 filter form:
+      GET .../dataTypes/{type}/dataPoints?filter=<expr>&pageSize=
     Follows nextPageToken pagination. Returns a flat list of dataPoint dicts.
+
+    Set use_filter=False for data types that don't support time-range filtering
+    (e.g. exercise sessions) - the caller must window the results client-side.
 
     NOTE: max query range is 14 days for heart-rate / active-minutes /
     total-calories / calories-in-heart-rate-zone, and 90 days for everything
@@ -264,11 +333,9 @@ def gh_list(data_type, start_dt, end_dt, extra_params=None):
     points = []
     page_token = None
     while True:
-        params = {
-            "startTime": _iso_z(start_dt),
-            "endTime": _iso_z(end_dt),
-            "pageSize": "10000",
-        }
+        params = {"pageSize": "10000"}
+        if use_filter:
+            params["filter"] = build_filter(data_type, start_dt, end_dt)
         if extra_params:
             params.update(extra_params)
         if page_token:
@@ -283,11 +350,42 @@ def gh_list(data_type, start_dt, end_dt, extra_params=None):
             break
     return points
 
+def gh_reconcile(data_type, start_dt, end_dt, extra_params=None):
+    """Reconciled (merged, deduped) stream for a data type over [start_dt, end_dt).
+
+    Same request shape as gh_list but uses the :reconcile method, which returns
+    Google's single merged stream across all sources - so a user wearing a watch
+    AND carrying a phone doesn't get their steps/HR counted 2-3x. Confirmed to
+    accept the same AIP-160 `filter` query param. Reconciled points drop the
+    dataSource block; the type payload (e.g. steps.count) is identical to list.
+    Use this for multi-device metrics (steps, distance, heart rate).
+    """
+    points = []
+    page_token = None
+    while True:
+        params = {
+            "filter": build_filter(data_type, start_dt, end_dt),
+            "pageSize": "10000",
+        }
+        if extra_params:
+            params.update(extra_params)
+        if page_token:
+            params["pageToken"] = page_token
+        url = f"{GHEALTH_BASE}/dataTypes/{data_type}/dataPoints:reconcile"
+        resp = request_data_from_ghealth(url, params=params)
+        if not resp:
+            break
+        points.extend(resp.get("dataPoints", []) or [])
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
+    return points
+
 def gh_daily_rollup(data_type, start_dt, end_dt):
     """Fetch per-day aggregates via the dailyRollUp method.
 
     Google exposes rollups through a custom verb on the collection:
-      GET .../dataTypes/{type}/dataPoints:dailyRollUp?startTime=&endTime=
+      GET .../dataTypes/{type}/dataPoints:dailyRollUp?filter=<expr>
     The rollup response wraps points under "dataPoints" (each a per-day bucket).
     The exact per-type payload keys are read defensively by the callers below.
     """
@@ -295,8 +393,7 @@ def gh_daily_rollup(data_type, start_dt, end_dt):
     page_token = None
     while True:
         params = {
-            "startTime": _iso_z(start_dt),
-            "endTime": _iso_z(end_dt),
+            "filter": build_filter(data_type, start_dt, end_dt),
         }
         if page_token:
             params["pageToken"] = page_token
@@ -362,7 +459,12 @@ ACCESS_TOKEN = Get_New_Access_Token(CLIENT_ID, CLIENT_SECRET)
 # ## InfluxDB Database Initialization
 
 # %%
-if INFLUXDB_VERSION == "2":
+influxdbclient = None
+influxdb_write_api = None
+
+if DEBUG_LOCAL:
+    logging.warning("DEBUG_LOCAL enabled: skipping InfluxDB connection. Records will be summarized to the console and dumped to a file instead of being written to InfluxDB.")
+elif INFLUXDB_VERSION == "2":
     try:
         influxdbclient = InfluxDBClient2(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
         influxdb_write_api = influxdbclient.write_api(write_options=SYNCHRONOUS)
@@ -380,12 +482,32 @@ else:
     logging.error("No matching version found. Supported values are 1 and 2")
     raise InfluxDBClientError("No matching version found. Supported values are 1 and 2:")
 
-test_influxdb_connection()
+if not DEBUG_LOCAL:
+    test_influxdb_connection()
 
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 2  # seconds
 
+def debug_dump_points(points):
+    """DEBUG_LOCAL sink: print a per-measurement summary and append to a JSONL file."""
+    counts = Counter(p.get("measurement", "?") for p in points)
+    summary = ", ".join(f"{m}={n}" for m, n in sorted(counts.items()))
+    logging.info(f"[DEBUG_LOCAL] {len(points)} records this batch -> {summary or '(none)'}")
+    os.makedirs(COLLECTED_RECORDS_FILE_PATH, exist_ok=True)
+    fname = os.path.join(COLLECTED_RECORDS_FILE_PATH, "debug_local_dump.jsonl")
+    with open(fname, "a") as f:
+        for p in points:
+            f.write(json.dumps(p, default=str) + "\n")
+    logging.info(f"[DEBUG_LOCAL] Appended {len(points)} records to {fname}")
+
+
 def write_points_to_influxdb(points):
+    if not points:
+        return
+    if DEBUG_LOCAL:
+        debug_dump_points(points)
+        return
+
     def retry_write(write_func, description="InfluxDB write"):
         attempt = 0
         backoff = INITIAL_BACKOFF
@@ -443,6 +565,21 @@ def local_date_to_utc(date_str, hour=0, minute=0):
     naive = datetime.fromisoformat(f"{date_str}T{hour:02d}:{minute:02d}:00")
     return LOCAL_TIMEZONE.localize(naive).astimezone(pytz.utc).isoformat()
 
+def daily_date_to_utc(date_field, hour=0, minute=0):
+    """Daily records carry `date` as a nested {year, month, day} object (or,
+    occasionally, a 'YYYY-MM-DD' string). Normalize either form to a UTC ISO
+    timestamp at local midnight (or the given hour)."""
+    if isinstance(date_field, dict):
+        y, m, d = date_field.get("year"), date_field.get("month"), date_field.get("day")
+        if not (y and m and d):
+            return None
+        date_str = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+    elif isinstance(date_field, str) and date_field:
+        date_str = date_field
+    else:
+        return None
+    return local_date_to_utc(date_str, hour=hour, minute=minute)
+
 # %% [markdown]
 # ## Date selection
 
@@ -482,19 +619,39 @@ def _range_bounds(start_date_str, end_date_str):
 
 # %%
 
-# NOTE: The Google Health "devices" concept has no read endpoint, so the
-# original DeviceBatteryLevel measurement can no longer be populated. This is a
-# hard gap in the new API (see MIGRATION.md). Kept as a no-op for clarity.
+# Device battery level -> DeviceBatteryLevel, via the users/*/pairedDevices
+# resource (batteryLevel + lastSyncTime). Skips SCALE devices so we report the
+# tracker/watch battery, matching the original addon's behaviour.
 def get_battery_level():
-    logging.info("Device battery level is not available in the Google Health API; skipping.")
+    resp = request_data_from_ghealth(f"{GHEALTH_BASE}/pairedDevices")
+    devices = (resp or {}).get("pairedDevices") or (resp or {}).get("devices") or []
+    if not devices:
+        logging.warning("No paired devices returned for battery level (may need an extra scope).")
+        return
+    for device in devices:
+        if str(device.get("deviceType", "")).upper() == "SCALE":
+            continue  # want the tracker/watch, not the scale
+        battery = _to_float(device.get("batteryLevel"))
+        if battery is None:
+            continue
+        sync = _first(device, "lastSyncTime")
+        utc_time = parse_physical_time({"physicalTime": sync}) if sync else datetime.now(pytz.utc).isoformat()
+        collected_records.append({
+            "measurement": "DeviceBatteryLevel",
+            "time": utc_time,
+            "fields": {"value": battery},
+        })
+        logging.info(f"Recorded battery level {battery} for {device.get('deviceVersion', DEVICENAME)}")
+        return
+    logging.warning("No non-scale paired device with a battery level found.")
 
 # Intraday heart rate + steps for a single day.
 # heart-rate (Sample kind) has a 14-day max range, so per-day is safe.
 def get_intraday_data_limit_1d(date_str, measurement_list=None):
     start_dt, end_dt = _day_bounds(date_str)
 
-    # Heart rate -> HeartRate_Intraday
-    hr_points = gh_list("heart-rate", start_dt, end_dt)
+    # Heart rate -> HeartRate_Intraday (reconciled: one merged stream, no per-device dupes)
+    hr_points = gh_reconcile("heart-rate", start_dt, end_dt)
     for p in hr_points:
         hr = p.get("heartRate", {})
         utc_time = parse_physical_time(hr.get("sampleTime", {}))
@@ -509,8 +666,8 @@ def get_intraday_data_limit_1d(date_str, measurement_list=None):
         })
     logging.info(f"Recorded {len(hr_points)} HeartRate_Intraday points for {date_str}")
 
-    # Steps -> Steps_Intraday (Interval kind, countSum per interval)
-    step_points = gh_list("steps", start_dt, end_dt)
+    # Steps -> Steps_Intraday (reconciled: merged across watch/phone, no double-count)
+    step_points = gh_reconcile("steps", start_dt, end_dt)
     for p in step_points:
         st = p.get("steps", {})
         interval = st.get("interval", {})
@@ -536,9 +693,9 @@ def get_daily_data_limit_30d(start_date_str, end_date_str):
     for p in hrv_points:
         hrv = p.get("dailyHeartRateVariability", p.get("heartRateVariability", {}))
         date_str = _first(hrv, "date")
-        rmssd = _to_float(_first(hrv, "rmssd", "dailyRmssd"))
-        deep = _to_float(_first(hrv, "deepRmssd"))
-        utc_time = local_date_to_utc(date_str, hour=4) if date_str else parse_physical_time(hrv.get("sampleTime", {}))
+        rmssd = _to_float(_first(hrv, "averageHeartRateVariabilityMilliseconds", "rmssd", "dailyRmssd"))
+        deep = _to_float(_first(hrv, "deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds", "deepRmssd"))
+        utc_time = daily_date_to_utc(date_str, hour=4) if date_str else parse_physical_time(hrv.get("sampleTime", {}))
         if utc_time is None:
             continue
         collected_records.append({
@@ -554,12 +711,12 @@ def get_daily_data_limit_30d(start_date_str, end_date_str):
     for p in br_points:
         br = p.get("dailyRespiratoryRate", {})
         date_str = _first(br, "date")
-        value = _to_float(_first(br, "breathingRate", "respiratoryRate", "value"))
+        value = _to_float(_first(br, "breathsPerMinute", "breathingRate", "respiratoryRate", "value"))
         if date_str is None or value is None:
             continue
         collected_records.append({
             "measurement": "BreathingRate",
-            "time": local_date_to_utc(date_str),
+            "time": daily_date_to_utc(date_str),
             "tags": {"Device": DEVICENAME},
             "fields": {"value": value},
         })
@@ -570,12 +727,19 @@ def get_daily_data_limit_30d(start_date_str, end_date_str):
     for p in temp_points:
         temp = p.get("dailySleepTemperatureDerivations", p.get("dailySleepTemperatureDerivation", {}))
         date_str = _first(temp, "date")
+        # Fitbit's RelativeValue was the nightly deviation from baseline. Google
+        # gives absolute nightly + baseline temps, so derive the deviation.
         value = _to_float(_first(temp, "nightlyRelative", "relativeTemperatureCelsius", "value"))
+        if value is None:
+            nightly = _to_float(_first(temp, "nightlyTemperatureCelsius"))
+            baseline = _to_float(_first(temp, "baselineTemperatureCelsius"))
+            if nightly is not None and baseline is not None:
+                value = round(nightly - baseline, 3)
         if date_str is None or value is None:
             continue
         collected_records.append({
             "measurement": "Skin Temperature Variation",
-            "time": local_date_to_utc(date_str),
+            "time": daily_date_to_utc(date_str),
             "tags": {"Device": DEVICENAME},
             "fields": {"RelativeValue": value},
         })
@@ -628,19 +792,27 @@ def get_daily_data_limit_100d(start_date_str, end_date_str):
         minutesREM = stage_minutes.get("REM", 0.0)
         minutesDeep = stage_minutes.get("DEEP", 0.0)
 
-        # isMainSleep is not part of Google's sleep schema; default True.
-        is_main = bool(_first(sleep, "isMainSleep", default=True))
+        # isMainSleep lives under sleep.metadata.mainSleep (naps carry .nap instead).
+        metadata = sleep.get("metadata", {})
+        is_main = bool(_first(metadata, "mainSleep", default=False))
+
+        # Google has no 'efficiency' field; derive it as asleep/in-period %.
+        minutesAsleep = _to_float(_first(summary, "minutesAsleep"), 0.0)
+        minutesInBed = _to_float(_first(summary, "minutesInSleepPeriod", "minutesInBed", "timeInBed"), 0.0)
+        efficiency = _to_float(_first(summary, "efficiency"))
+        if efficiency is None:
+            efficiency = round(minutesAsleep / minutesInBed * 100, 1) if minutesInBed else 0.0
 
         collected_records.append({
             "measurement": "Sleep Summary",
             "time": utc_time,
             "tags": {"Device": DEVICENAME, "isMainSleep": is_main},
             "fields": {
-                'efficiency': _to_float(_first(summary, "efficiency"), 0.0),
+                'efficiency': efficiency,
                 'minutesAfterWakeup': _to_float(_first(summary, "minutesAfterWakeUp", "minutesAfterWakeup"), 0.0),
-                'minutesAsleep': _to_float(_first(summary, "minutesAsleep"), 0.0),
+                'minutesAsleep': minutesAsleep,
                 'minutesToFallAsleep': _to_float(_first(summary, "minutesToFallAsleep"), 0.0),
-                'minutesInBed': _to_float(_first(summary, "minutesInSleepPeriod", "minutesInBed", "timeInBed"), 0.0),
+                'minutesInBed': minutesInBed,
                 'minutesAwake': _to_float(_first(summary, "minutesAwake"), 0.0),
                 'minutesLight': minutesLight,
                 'minutesREM': minutesREM,
@@ -691,18 +863,20 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
     # minutesSedentary/Lightly/Fairly/VeryActive fields.
     level_field_map = {
         'SEDENTARY': 'minutesSedentary',
-        'LIGHT': 'minutesLightlyActive', 'LIGHTLY_ACTIVE': 'minutesLightlyActive',
-        'MODERATE': 'minutesFairlyActive', 'FAIRLY_ACTIVE': 'minutesFairlyActive',
-        'VIGOROUS': 'minutesVeryActive', 'VERY_ACTIVE': 'minutesVeryActive',
+        'LIGHTLY_ACTIVE': 'minutesLightlyActive', 'LIGHT': 'minutesLightlyActive',
+        'MODERATELY_ACTIVE': 'minutesFairlyActive', 'MODERATE': 'minutesFairlyActive', 'FAIRLY_ACTIVE': 'minutesFairlyActive',
+        'VERY_ACTIVE': 'minutesVeryActive', 'VIGOROUS': 'minutesVeryActive',
     }
-    activity_points = gh_list("activity-level", start_dt, end_dt)
+    # reconcile -> single merged stream so we don't count the same minute twice
+    # when both the watch and MobileTrack report it.
+    activity_points = gh_reconcile("activity-level", start_dt, end_dt)
     per_day = {}
     for p in activity_points:
         al = p.get("activityLevel", {})
         interval = al.get("interval", {})
         s_start = _first(interval, "startTime")
         s_end = _first(interval, "endTime")
-        level = str(_first(al, "level", "activityLevel", default="")).upper()
+        level = str(_first(al, "activityLevelType", "level", "activityLevel", default="")).upper()
         field = level_field_map.get(level)
         if not (s_start and s_end and field):
             continue
@@ -722,32 +896,42 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
     if per_day:
         logging.info(f"Recorded Activity Minutes for {start_date_str} to {end_date_str}")
 
-    # --- Distance / Total calories / Steps daily totals ---
-    # distance -> 'distance' (millimeters). Original stored the user's Fitbit
-    # distance unit; here we convert mm to kilometers.
-    for dtype, measurement, payload_key, value_keys, scale in [
-        ("distance", "distance", "distance", ("distanceMillimeters", "distance"), 1e-6),
-        ("total-calories", "calories", "totalCalories", ("caloriesKcal", "calories", "value"), 1.0),
-        ("steps", "Total Steps", "steps", ("countSum", "count", "value"), 1.0),
-    ]:
-        rollups = gh_daily_rollup(dtype, start_dt, end_dt)
-        for p in rollups:
-            payload = p.get(payload_key, p)
-            date_str = _first(payload, "date") or _first(p, "date")
-            value = _to_float(_first(payload, *value_keys))
-            if date_str is None or value is None:
+    # --- Distance / Steps daily totals (summed from the list endpoint) ---
+    # Both 'steps' and 'distance' are Interval types that support :list, so we
+    # sum their intervals per local day rather than calling :dailyRollUp (whose
+    # request shape differs from list and isn't wired up here). 'total-calories'
+    # only supports rollUp, so the daily 'calories' total is deferred until the
+    # rollUp request shape is confirmed against a live response.
+    def _sum_interval_by_day(data_type, payload_key, value_keys, scale, measurement):
+        by_day = {}
+        # reconcile -> merged stream, so summing intervals gives the true daily
+        # total instead of watch+phone+MobileTrack added together.
+        for p in gh_reconcile(data_type, start_dt, end_dt):
+            payload = p.get(payload_key, {})
+            s_start = _first(payload.get("interval", {}), "startTime")
+            val = _to_float(_first(payload, *value_keys))
+            if not s_start or val is None:
                 continue
+            day = datetime.fromisoformat(s_start.replace("Z", "+00:00")).astimezone(LOCAL_TIMEZONE).strftime("%Y-%m-%d")
+            by_day[day] = by_day.get(day, 0.0) + val
+        for day, val in by_day.items():
             collected_records.append({
                 "measurement": measurement,
-                "time": local_date_to_utc(date_str),
+                "time": local_date_to_utc(day),
                 "tags": {"Device": DEVICENAME},
-                "fields": {"value": float(value) * scale},
+                "fields": {"value": float(val) * scale},
             })
-        if rollups:
+        if by_day:
             logging.info(f"Recorded {measurement} for {start_date_str} to {end_date_str}")
 
+    _sum_interval_by_day("steps", "steps", ("count", "countSum", "value"), 1.0, "Total Steps")
+    # distance value is 'millimeters' (string); convert mm -> km (1e-6).
+    _sum_interval_by_day("distance", "distance", ("millimeters", "distanceMillimeters", "distance", "value"), 1e-6, "distance")
+
     # --- HR zones -> HR zones (Normal/Fat Burn/Cardio/Peak minutes) ---
-    hrz_points = gh_list("daily-heart-rate-zones", start_dt, end_dt)
+    # daily-heart-rate-zones only supports :reconcile (not :list). Field names
+    # below are best-effort and unverified against live data.
+    hrz_points = gh_reconcile("daily-heart-rate-zones", start_dt, end_dt)
     zone_name_map = {
         'OUT_OF_RANGE': 'Normal', 'NORMAL': 'Normal',
         'FAT_BURN': 'Fat Burn', 'CARDIO': 'Cardio', 'PEAK': 'Peak',
@@ -764,7 +948,7 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
         if date_str:
             collected_records.append({
                 "measurement": "HR zones",
-                "time": local_date_to_utc(date_str),
+                "time": daily_date_to_utc(date_str),
                 "tags": {"Device": DEVICENAME},
                 "fields": fields,
             })
@@ -781,7 +965,7 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
             continue
         collected_records.append({
             "measurement": "RestingHR",
-            "time": local_date_to_utc(date_str),
+            "time": daily_date_to_utc(date_str),
             "tags": {"Device": DEVICENAME},
             "fields": {"value": value},
         })
@@ -796,14 +980,14 @@ def get_daily_data_limit_none(start_date_str, end_date_str):
     for p in points:
         ox = p.get("dailyOxygenSaturation", {})
         date_str = _first(ox, "date")
-        avg = _to_float(_first(ox, "avgPercentage", "averagePercentage", "avg"))
-        mx = _to_float(_first(ox, "maxPercentage", "max"))
-        mn = _to_float(_first(ox, "minPercentage", "min"))
+        avg = _to_float(_first(ox, "averagePercentage", "avgPercentage", "avg"))
+        mx = _to_float(_first(ox, "upperBoundPercentage", "maxPercentage", "max"))
+        mn = _to_float(_first(ox, "lowerBoundPercentage", "minPercentage", "min"))
         if date_str is None:
             continue
         collected_records.append({
             "measurement": "SPO2",
-            "time": local_date_to_utc(date_str),
+            "time": daily_date_to_utc(date_str),
             "tags": {"Device": DEVICENAME},
             "fields": {"avg": avg, "max": mx, "min": mn},
         })
@@ -815,14 +999,25 @@ def get_daily_data_limit_none(start_date_str, end_date_str):
 def fetch_latest_activities(end_date_str, lookback_days=30):
     end_bound = LOCAL_TIMEZONE.localize(datetime.fromisoformat(end_date_str + "T00:00:00")) + timedelta(days=1)
     start_bound = end_bound - timedelta(days=lookback_days)
-    exercises = gh_list("exercise", start_bound, end_bound)
+    # exercise sessions don't support time-range filtering; list recent sessions
+    # and window them client-side by start time.
+    exercises = gh_list("exercise", start_bound, end_bound, use_filter=False)
+    kept = 0
     for p in exercises:
         ex = p.get("exercise", {})
         interval = ex.get("interval", {})
         s_start = _first(interval, "startTime")
         if not s_start:
             continue
+        s_dt = datetime.fromisoformat(s_start.replace("Z", "+00:00"))
+        if not (start_bound <= s_dt < end_bound):
+            continue
+        # Skip empty-metrics duplicates (e.g. a manual Health Connect copy of a
+        # workout the watch already logged with full metrics).
         metrics = ex.get("metricsSummary", {})
+        if not metrics:
+            continue
+        kept += 1
         fields = {}
         active_duration = _first(ex, "activeDuration")
         if active_duration:
@@ -849,7 +1044,7 @@ def fetch_latest_activities(end_date_str, lookback_days=30):
             "tags": {"ActivityName": _first(ex, "displayName", "exerciseType", default="Workout")},
             "fields": fields,
         })
-    logging.info(f"Fetched {len(exercises)} recent workouts before {end_date_str}")
+    logging.info(f"Recorded {kept} workouts (of {len(exercises)} listed) within {lookback_days}d before {end_date_str}")
 
 
 # Weight -> Weight (weight, bmi, fat). goal has no Google Health equivalent.
@@ -875,7 +1070,11 @@ def fetch_weight_logs(start_date_str, end_date_str):
     for p in weight_points:
         w = p.get("weight", {})
         utc_time = parse_physical_time(w.get("sampleTime", {}))
+        # Google Health returns weight as an integer number of grams (weightGrams).
         kg = _to_float(_first(w, "weightKilograms", "kilograms", "value"))
+        if kg is None:
+            grams = _to_float(_first(w, "weightGrams"))
+            kg = (grams / 1000.0) if grams is not None else None
         if utc_time is None or kg is None:
             continue
         collected_records.append({
@@ -929,6 +1128,7 @@ if AUTO_DATE_RANGE:
         get_daily_data_limit_none(start_date_str, end_date_str)
         fetch_weight_logs(start_date_str, end_date_str)
         fetch_latest_activities(end_date_str)
+        get_battery_level()
         dump_collected_records_to_file(f"collected_{start_date_str}_to_{end_date_str}.json")
         write_points_to_influxdb(collected_records)
         collected_records = []
@@ -989,6 +1189,7 @@ if SCHEDULE_AUTO_UPDATE:
     schedule.every(6).hours.do(lambda: get_daily_data_limit_none(start_date_str, end_date_str))
     schedule.every(1).hours.do(lambda: fetch_latest_activities(end_date_str))
     schedule.every(5).hours.do(lambda: fetch_weight_logs(start_date_str, end_date_str))
+    schedule.every(20).minutes.do(get_battery_level)
 
     while True:
         schedule.run_pending()

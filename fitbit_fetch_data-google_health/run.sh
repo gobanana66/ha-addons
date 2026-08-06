@@ -26,6 +26,7 @@ export CLIENT_SECRET=$(bashio::config 'client_secret')
 export DEVICENAME=$(bashio::config 'devicename')
 export GOOGLE_FORM_URL=$(bashio::config 'google_form_url')
 export LOCAL_TIMEZONE=$(bashio::config 'local_timezone')
+export DEBUG_LOCAL=$(bashio::config 'debug_local')
 
 # Write initial Google refresh token if provided
 REFRESH_TOKEN=$(bashio::config 'refresh_token')

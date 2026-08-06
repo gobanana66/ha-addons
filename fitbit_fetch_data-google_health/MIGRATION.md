@@ -91,38 +91,49 @@ You'll replace the Fitbit `client_id` / `client_secret` / `refresh_token` with
 
 ## Field-by-field mapping (InfluxDB schema preserved)
 
-| InfluxDB measurement | Old Fitbit source | New Google Health data type | Method | Confidence |
-| --- | --- | --- | --- | --- |
-| `HeartRate_Intraday` | `activities/heart/.../1sec` | `heart-rate` | list | **Confirmed** (`heartRate.sampleTime.physicalTime`, `beatsPerMinute`) |
-| `Steps_Intraday` | `activities/steps/.../1min` | `steps` | list | **Confirmed** (`steps.interval.startTime`, `countSum`) |
-| `SPO2_Intraday` | `spo2/.../all` | `oxygen-saturation` | list | **Confirmed** (`oxygenSaturation.percentage`) |
-| `Sleep Summary` / `Sleep Levels` | `sleep/...` | `sleep` | list | **Confirmed** (`sleep.stages[]`, `sleep.summary.stagesSummary[]`) |
-| `Activity Records` | `activities/list` | `exercise` | list | **Confirmed** (`exercise.metricsSummary`) |
-| `Weight` | `body/log/weight` | `weight` (+ `body-fat`) | list | Confirmed type; field key (`weightKilograms`) read defensively |
-| `RestingHR` | `activities/heart` restingHeartRate | `daily-resting-heart-rate` | list | Field key read defensively |
-| `HRV` | `hrv/date` | `daily-heart-rate-variability` | list | `rmssd` confirmed; Fitbit's `deepRmssd` may be absent |
-| `BreathingRate` | `br/date` | `daily-respiratory-rate` | list | Field key read defensively |
-| `Skin Temperature Variation` | `temp/skin` | `daily-sleep-temperature-derivations` | list | Field key read defensively |
-| `SPO2` (avg/max/min) | `spo2/date` | `daily-oxygen-saturation` | list | Field keys read defensively |
-| `Activity Minutes` | `activities/tracker/minutes*` | `activity-level` | list | Reconstructed by summing interval durations per day |
-| `distance` / `calories` / `Total Steps` | `activities/tracker/*` | `distance` / `total-calories` / `steps` | dailyRollUp | Rollup payload keys read defensively |
-| `HR zones` | `activities/heart` zones | `daily-heart-rate-zones` | list | Zone names mapped; field keys read defensively |
+All rows below were **verified against live API responses** (via Postman) unless
+noted. Values that are JSON strings (e.g. `beatsPerMinute`, `steps`) are cast to
+float in code. Daily types carry `date` as a nested `{year, month, day}` object.
 
-"Read defensively" means the code tries several likely field names (via the
-`_first(...)` helper) and degrades gracefully to `null` rather than crashing —
-because the Google Health schema is still evolving pre-GA. Once you have a live
-token, confirm exact keys against the
-[REST reference](https://developers.google.com/health/reference/rest) and tighten
-these if needed.
+| InfluxDB measurement | Google Health data type | Method | Verified field(s) |
+| --- | --- | --- | --- |
+| `HeartRate_Intraday` | `heart-rate` | **reconcile** | `heartRate.sampleTime.physicalTime`, `heartRate.beatsPerMinute` ✅ |
+| `Steps_Intraday` | `steps` | **reconcile** | `steps.interval.startTime`, `steps.count` ✅ |
+| `SPO2_Intraday` | `oxygen-saturation` | list | `oxygenSaturation.percentage` (docs-confirmed; usually empty — Google-side gap) |
+| `Sleep Summary` / `Sleep Levels` | `sleep` | list | `sleep.interval`, `stages[].type`, `summary.stagesSummary[]`, `minutesAsleep/Awake/InSleepPeriod`; `metadata.mainSleep`; efficiency derived ✅ |
+| `Activity Records` | `exercise` | list (no filter, windowed client-side) | `metricsSummary.caloriesKcal/distanceMillimeters/steps/averageHeartRateBeatsPerMinute`, `exerciseType`/`displayName`, `activeDuration` ✅ (empty-metrics dupes skipped) |
+| `Weight` | `weight` (+ `body-fat`) | list | `weight.weightGrams`÷1000, `bodyFat.percentage` ✅ |
+| `RestingHR` | `daily-resting-heart-rate` | list | `dailyRestingHeartRate.beatsPerMinute` ✅ |
+| `HRV` | `daily-heart-rate-variability` | list | `averageHeartRateVariabilityMilliseconds`, `deepSleepRootMeanSquareOfSuccessiveDifferencesMilliseconds` ✅ |
+| `BreathingRate` | `daily-respiratory-rate` | list | `dailyRespiratoryRate.breathsPerMinute` ✅ |
+| `Skin Temperature Variation` | `daily-sleep-temperature-derivations` | list | derived: `nightlyTemperatureCelsius − baselineTemperatureCelsius` ✅ |
+| `SPO2` (avg/max/min) | `daily-oxygen-saturation` | list | `averagePercentage`, `upperBoundPercentage`, `lowerBoundPercentage` ✅ |
+| `Activity Minutes` | `activity-level` | **reconcile** | `activityLevel.activityLevelType` (SEDENTARY/LIGHTLY_ACTIVE/MODERATELY_ACTIVE/VERY_ACTIVE), summed per day ✅ |
+| `distance` / `Total Steps` | `distance` / `steps` | **reconcile** (summed per day) | `distance.millimeters`÷1e6, `steps.count` ✅ |
+| `calories` (daily total) | `total-calories` | dailyRollUp | **deferred** — rollUp request shape not yet wired |
+| `HR zones` | `daily-heart-rate-zones` | **reconcile** | field names best-effort, **unverified** (no live sample seen) |
+
+Filter notes learned during verification: the `list`/`reconcile` endpoints take
+an AIP-160 `filter` param (not `startTime`/`endTime`). Daily types filter on
+`<type>.date` with **`>=` and `<` only** (no `<=`). `exercise` sessions don't
+support time-range filtering at all, so they're listed unfiltered and windowed
+client-side. `:dailyRollUp` does **not** accept the `filter` param.
 
 ## Known gaps (no Google Health equivalent today)
 
-- **`DeviceBatteryLevel`** — the Fitbit `devices` endpoint has no Google Health
-  equivalent. This measurement is no longer populated (`get_battery_level()` is
-  a logged no-op).
 - **Weight `goal` / `goal_float` / `bmi`** — not exposed by the Google Health
   `weight` type. These fields are written as `null` to keep the InfluxDB field
   set unchanged; update your dashboard panels accordingly.
+- **`local_timezone: "Automatic"`** — the `getProfile` resource has no timezone
+  field, so `Automatic` falls back to UTC. Set `local_timezone` explicitly.
+
+### Recovered (not the data-type API)
+
+- **`DeviceBatteryLevel`** — restored via the `users/me/pairedDevices` resource
+  (`batteryLevel` + `lastSyncTime`), not a `dataTypes` query. `get_battery_level()`
+  lists paired devices, skips SCALE devices, and records the tracker/watch
+  battery. May require an extra OAuth scope; the call degrades gracefully (logs
+  a warning) if the scope isn't granted.
 - **`local_timezone: "Automatic"`** — the old code read your Fitbit profile
   timezone. The Health API profile shape differs, so `Automatic` now falls back
   to UTC. **Set `local_timezone` explicitly.**

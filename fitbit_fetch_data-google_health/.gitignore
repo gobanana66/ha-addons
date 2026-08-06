@@ -1,0 +1,26 @@
+# --- Secrets & local config ---
+.env
+.env.*
+!.env.example
+
+# --- OAuth tokens (never commit) ---
+*.token
+tokens/
+google_health.token
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Local debug dumps / collected records ---
+debug/
+*.jsonl
+collected_*.json
+failed_records_*.json
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
