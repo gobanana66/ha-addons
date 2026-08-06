@@ -59,6 +59,8 @@ You'll replace the Fitbit `client_id` / `client_secret` / `refresh_token` with
    - `.../auth/googlehealth.activity_and_fitness.readonly`
    - `.../auth/googlehealth.health_metrics_and_measurements.readonly`
    - `.../auth/googlehealth.sleep.readonly`
+   - `.../auth/googlehealth.profile.readonly` — for device battery (pairedDevices)
+   - `.../auth/googlehealth.settings.readonly` — for device battery (pairedDevices)
 
 5. **Get a refresh token.** Run the OAuth 2.0 authorization-code flow once. The
    simplest path is the

@@ -98,6 +98,10 @@ GHEALTH_SCOPES = [
     "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
     "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
     "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+    # Needed for pairedDevices (DeviceBatteryLevel). If you don't want battery
+    # data you can drop these two and get_battery_level() will just 403/skip.
+    "https://www.googleapis.com/auth/googlehealth.profile.readonly",
+    "https://www.googleapis.com/auth/googlehealth.settings.readonly",
 ]
 
 ACCESS_TOKEN = ""  # populated by Get_New_Access_Token() below
