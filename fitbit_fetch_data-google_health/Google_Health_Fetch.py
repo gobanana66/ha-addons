@@ -1187,6 +1187,10 @@ def fetch_latest_activities(end_date_str, lookback_days=7, max_pages=MAX_EXERCIS
 
 
 # Weight -> Weight (weight, bmi, fat). goal has no Google Health equivalent.
+# Tracks which days have already been pushed to the Google Form this process
+# lifetime, so scheduled re-runs don't append duplicate rows for the same date.
+_submitted_weight_form_days = set()
+
 def fetch_weight_logs(start_date_str, end_date_str):
     start_dt, end_dt = _range_bounds(start_date_str, end_date_str)
     weight_points = gh_list("weight", start_dt, end_dt)
@@ -1272,6 +1276,8 @@ if AUTO_DATE_RANGE:
         for date_str in date_list:
             get_intraday_data_limit_1d(date_str)
             flush_collected_records()
+        fetch_weight_logs(start_date_str, end_date_str)
+        flush_collected_records()
         get_daily_data_limit_30d(start_date_str, end_date_str)
         flush_collected_records()
         get_daily_data_limit_100d(start_date_str, end_date_str)
@@ -1279,8 +1285,6 @@ if AUTO_DATE_RANGE:
         get_daily_data_limit_365d(start_date_str, end_date_str)
         flush_collected_records()
         get_daily_data_limit_none(start_date_str, end_date_str)
-        flush_collected_records()
-        fetch_weight_logs(start_date_str, end_date_str)
         flush_collected_records()
         fetch_latest_activities(end_date_str)
         flush_collected_records()
