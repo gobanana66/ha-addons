@@ -1109,7 +1109,7 @@ def fetch_weight_logs(start_date_str, end_date_str):
             "time": utc_time,
             "tags": {"Device": DEVICENAME},
             "fields": {
-                "weight": kg,
+                "weight": weight_lb,
                 # Use the configured fallback when Google Health does not provide a goal.
                 "goal": goal_numeric,
                 "goal_float": goal_numeric,
