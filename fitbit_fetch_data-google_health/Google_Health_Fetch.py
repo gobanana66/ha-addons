@@ -168,8 +168,8 @@ reset_api_request_count()
 # ## Generic Google Health API caller
 
 # %%
-def request_data_from_ghealth(url, params=None, request_type="get"):
-    """Generic GET caller for Google Health API endpoints.
+def request_data_from_ghealth(url, params=None, request_type="get", json_body=None):
+    """Generic GET/POST caller for Google Health API endpoints.
 
     Handles the shared concerns: bearer auth, the local rate-limit counter,
     401 (token refresh), 429 (rate limit) and 5xx (server) backoff.  Returns the
@@ -197,6 +197,8 @@ def request_data_from_ghealth(url, params=None, request_type="get"):
 
             if request_type == "get":
                 response = requests.get(url, headers=headers, params=params, timeout=60)
+            elif request_type == "post":
+                response = requests.post(url, headers=headers, params=params, json=json_body, timeout=60)
             else:
                 raise Exception("Invalid request type " + str(request_type))
 
@@ -390,27 +392,44 @@ def gh_reconcile(data_type, start_dt, end_dt, extra_params=None):
             break
     return points
 
+def _civil_dt(dt):
+    """Build a CivilDateTime {date:{...}, time:{...}} from a datetime, in LOCAL_TIMEZONE."""
+    local = dt.astimezone(LOCAL_TIMEZONE)
+    return {
+        "date": {"year": local.year, "month": local.month, "day": local.day},
+        "time": {"hours": local.hour, "minutes": local.minute, "seconds": local.second},
+    }
+
 def gh_daily_rollup(data_type, start_dt, end_dt):
     """Fetch per-day aggregates via the dailyRollUp method.
 
-    Google exposes rollups through a custom verb on the collection:
-      GET .../dataTypes/{type}/dataPoints:dailyRollUp?filter=<expr>
-    The rollup response wraps points under "dataPoints" (each a per-day bucket).
-    The exact per-type payload keys are read defensively by the callers below.
+    dailyRollUp is a POST with a CivilTimeInterval `range` body (NOT a filter):
+      POST .../dataTypes/{type}/dataPoints:dailyRollUp
+      { "range": {"start": <CivilDateTime>, "end": <CivilDateTime>},
+        "windowSizeDays": 1, "pageSize": 10000 }
+    Response wraps buckets under "rollupDataPoints"; each has a civilStartTime
+    and a union value field (e.g. totalCalories.kcalSum). Max range 14 days for
+    total-calories / active-minutes / heart-rate / calories-in-heart-rate-zone.
     """
+    # windowSizeDays * pageSize must not exceed the type's max range (14 or 90
+    # days). With a 1-day window, pageSize must be <= that many days, so size it
+    # to the number of days requested (one bucket per day).
+    days = max(1, int(round((end_dt - start_dt).total_seconds() / 86400.0)))
     points = []
     page_token = None
     while True:
-        params = {
-            "filter": build_filter(data_type, start_dt, end_dt),
+        body = {
+            "range": {"start": _civil_dt(start_dt), "end": _civil_dt(end_dt)},
+            "windowSizeDays": 1,
+            "pageSize": days,
         }
         if page_token:
-            params["pageToken"] = page_token
+            body["pageToken"] = page_token
         url = f"{GHEALTH_BASE}/dataTypes/{data_type}/dataPoints:dailyRollUp"
-        resp = request_data_from_ghealth(url, params=params)
+        resp = request_data_from_ghealth(url, request_type="post", json_body=body)
         if not resp:
             break
-        points.extend(resp.get("dataPoints", []) or [])
+        points.extend(resp.get("rollupDataPoints", []) or [])
         page_token = resp.get("nextPageToken")
         if not page_token:
             break
@@ -917,10 +936,7 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
 
     # --- Distance / Steps daily totals (summed from the list endpoint) ---
     # Both 'steps' and 'distance' are Interval types that support :list, so we
-    # sum their intervals per local day rather than calling :dailyRollUp (whose
-    # request shape differs from list and isn't wired up here). 'total-calories'
-    # only supports rollUp, so the daily 'calories' total is deferred until the
-    # rollUp request shape is confirmed against a live response.
+    # sum their intervals per local day rather than calling :dailyRollUp.
     def _sum_interval_by_day(data_type, payload_key, value_keys, scale, measurement):
         by_day = {}
         # reconcile -> merged stream, so summing intervals gives the true daily
@@ -946,6 +962,60 @@ def get_daily_data_limit_365d(start_date_str, end_date_str):
     _sum_interval_by_day("steps", "steps", ("count", "countSum", "value"), 1.0, "Total Steps")
     # distance value is 'millimeters' (string); convert mm -> km (1e-6).
     _sum_interval_by_day("distance", "distance", ("millimeters", "distanceMillimeters", "distance", "value"), 1e-6, "distance")
+
+    # --- Daily total calories burned -> calories (total-calories dailyRollUp) ---
+    # POST dailyRollUp; value confirmed as totalCalories.kcalSum.
+    cal_rollups = gh_daily_rollup("total-calories", start_dt, end_dt)
+    for p in cal_rollups:
+        kcal = _to_float(_first(p.get("totalCalories", {}), "kcalSum", "value"))
+        date_obj = p.get("civilStartTime", {}).get("date")
+        if kcal is None or not date_obj:
+            continue
+        collected_records.append({
+            "measurement": "calories",
+            "time": daily_date_to_utc(date_obj),
+            "tags": {"Device": DEVICENAME},
+            "fields": {"value": kcal},
+        })
+    if cal_rollups:
+        logging.info(f"Recorded calories for {start_date_str} to {end_date_str}")
+
+    # --- Active Zone Minutes -> Active Zone Minutes (dailyRollUp) ---
+    # Field name best-effort (ActiveZoneMinutesRollupValue) - verify in Postman.
+    azm_rollups = gh_daily_rollup("active-zone-minutes", start_dt, end_dt)
+    for p in azm_rollups:
+        azm = p.get("activeZoneMinutes", {})
+        val = _to_float(_first(azm, "totalMinutes", "minutesSum", "activeZoneMinutesSum", "minutes", "value"))
+        date_obj = p.get("civilStartTime", {}).get("date")
+        if val is None or not date_obj:
+            continue
+        collected_records.append({
+            "measurement": "Active Zone Minutes",
+            "time": daily_date_to_utc(date_obj),
+            "tags": {"Device": DEVICENAME},
+            "fields": {"value": val},
+        })
+    if azm_rollups:
+        logging.info(f"Recorded Active Zone Minutes for {start_date_str} to {end_date_str}")
+
+    # --- VO2 max -> VO2Max (daily-vo2-max, list) ---
+    # Field name best-effort - verify in Postman.
+    vo2_points = gh_list("daily-vo2-max", start_dt, end_dt)
+    for p in vo2_points:
+        v = p.get("dailyVo2Max", p.get("dailyVO2Max", {}))
+        val = _to_float(_first(v, "vo2Max", "vo2MaxMillilitersPerKilogramPerMinute",
+                               "millilitersPerKilogramPerMinute", "value"))
+        date_obj = _first(v, "date")
+        if val is None or not date_obj:
+            continue
+        collected_records.append({
+            "measurement": "VO2Max",
+            "time": daily_date_to_utc(date_obj),
+            "tags": {"Device": DEVICENAME},
+            "fields": {"value": val},
+        })
+    if vo2_points:
+        logging.info(f"Recorded VO2Max for {start_date_str} to {end_date_str}")
 
     # --- HR zones -> HR zones (Normal/Fat Burn/Cardio/Peak minutes) ---
     # daily-heart-rate-zones only supports :reconcile (not :list). Field names

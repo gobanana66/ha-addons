@@ -176,6 +176,10 @@ def fb_distance_km():
             return _f(d.get("distance"))
     return None
 
+def fb_calories():
+    j = fb_get(f"/1/user/-/activities/date/{DATE}.json")
+    return _f(_first(j.get("summary", {}), "caloriesOut")) if j else None
+
 def fb_resting_hr():
     j = fb_get(f"/1/user/-/activities/heart/date/{DATE}/1d.json")
     if not j:
@@ -312,6 +316,34 @@ def gh_distance_km():
             total += v; seen = True
     return (total / 1e6) if seen else None
 
+def _civil_dt(dt):
+    l = dt.astimezone(TZ)
+    return {"date": {"year": l.year, "month": l.month, "day": l.day},
+            "time": {"hours": l.hour, "minutes": l.minute, "seconds": l.second}}
+
+def gh_daily_rollup(data_type):
+    """POST :dailyRollUp for one day (DATE). Returns rollupDataPoints list."""
+    # windowSizeDays * pageSize must not exceed the type max; 1 day window here.
+    body = {"range": {"start": _civil_dt(_day_start), "end": _civil_dt(_day_end)},
+            "windowSizeDays": 1, "pageSize": 1}
+    r = requests.post(
+        f"{GHEALTH_BASE}/dataTypes/{data_type}/dataPoints:dailyRollUp",
+        headers={"Authorization": f"Bearer {GOOGLE_TOKEN}", "Content-Type": "application/json"},
+        json=body, timeout=60,
+    )
+    if r.status_code != 200:
+        gh_list.last_error = f"{data_type}:dailyRollUp {r.status_code} {r.text[:140]}"
+        return []
+    return r.json().get("rollupDataPoints", []) or []
+
+def gh_calories():
+    total, seen = 0.0, False
+    for p in gh_daily_rollup("total-calories"):
+        v = _f(_first(p.get("totalCalories", {}), "kcalSum", "value"))
+        if v is not None:
+            total += v; seen = True
+    return total if seen else None
+
 def gh_resting_hr():
     for p in gh_list("daily-resting-heart-rate"):
         v = _f(_first(p.get("dailyRestingHeartRate", {}), "beatsPerMinute"))
@@ -420,6 +452,7 @@ def gh_workouts():
 # --------------------------------------------------------------------------- #
 PROBES = [
     ("Total steps",       "steps", fb_steps,         gh_steps,        True),
+    ("Calories burned",   "kcal",  fb_calories,      gh_calories,     True),
     ("Resting HR",        "bpm",   fb_resting_hr,    gh_resting_hr,   True),
     ("Sleep asleep",      "min",   fb_sleep_minutes, gh_sleep_minutes, True),
     ("Sleep deep",        "min",   fb_sleep_deep,    gh_sleep_deep,   True),
