@@ -30,7 +30,8 @@ options:
   client_secret: null
   devicename: "Fitbit"
   local_timezone: "Automatic"
-  auto_date_range: ""
+  auto_date_range: true
+  auto_update_date_range: 1
   influxdb_version: "1"
   # --- InfluxDB General ---
   influxdb_url: "http://localhost:8086" # For v2 and v3
@@ -58,6 +59,7 @@ schema:
   local_timezone: str
   # Toggle automatic date range selection. When false, the addon will prompt for start/end dates via logs/input.
   auto_date_range: bool
+  auto_update_date_range: int?
   influxdb_version: list(1|2|3)
   # --- InfluxDB General ---
   influxdb_url: url?

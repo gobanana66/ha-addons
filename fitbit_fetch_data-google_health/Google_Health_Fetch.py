@@ -60,8 +60,11 @@ CLIENT_SECRET = os.environ.get("CLIENT_SECRET") or "your_google_oauth_client_sec
 
 DEVICENAME = os.environ.get("DEVICENAME") or "Your_Device_Name"  # e.g. "Charge5" (used as an InfluxDB tag only)
 
-AUTO_DATE_RANGE = False  # Automatically selects date range from today's date and auto_update_date_range
-auto_update_date_range = 1  # Days to go back from today for AUTO_DATE_RANGE. Keep this small (<=2).
+AUTO_DATE_RANGE = str(os.environ.get("AUTO_DATE_RANGE", "true")).strip().lower() in ("1", "true", "yes", "on", "y")
+try:
+    auto_update_date_range = int(os.environ.get("AUTO_UPDATE_DATE_RANGE", "1"))
+except (TypeError, ValueError):
+    auto_update_date_range = 1  # Days to go back from today for AUTO_DATE_RANGE. Keep this small (<=2).
 LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE") or "Automatic"
 SCHEDULE_AUTO_UPDATE = True if AUTO_DATE_RANGE else False
 SERVER_ERROR_MAX_RETRY = 3

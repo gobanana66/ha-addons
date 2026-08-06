@@ -13,5 +13,7 @@
   "fitbit_token": "YOUR_REFRESH_TOKEN",
   "devicename": "Charge5",
   "local_timezone": "Automatic",
+  "auto_date_range": true,
+  "auto_update_date_range": 1,
   "google_form_url": ""
 }
