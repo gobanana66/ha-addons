@@ -1209,55 +1209,64 @@ def fetch_weight_logs(start_date_str, end_date_str):
         logging.warning(f"No weight data available for {start_date_str} to {end_date_str}")
         return
 
-    form_data = ''
+    # Google returns weight newest-first and with multiple sources per reading.
+    # Keep the most recent reading per LOCAL day (first seen = newest), keyed by
+    # the local calendar date so a weigh-in maps to the day you actually weighed.
+    weight_by_day = {}
     for p in weight_points:
         w = p.get("weight", {})
         utc_time = parse_physical_time(w.get("sampleTime", {}))
-        # Google Health returns weight as an integer number of grams (weightGrams).
         kg = _to_float(_first(w, "weightKilograms", "kilograms", "value"))
         if kg is None:
             grams = _to_float(_first(w, "weightGrams"))
             kg = (grams / 1000.0) if grams is not None else None
         if utc_time is None or kg is None:
             continue
+        local_day = datetime.fromisoformat(utc_time).astimezone(LOCAL_TIMEZONE).strftime("%Y-%m-%d")
+        if local_day not in weight_by_day:
+            weight_by_day[local_day] = (utc_time, kg)
 
-        goal_value = _first(w, "goal", "goalKilograms", "goalWeightKilograms", "goalWeight", "weightGoal", default=None)
-        goal_numeric = _to_float(goal_value)
-        if goal_numeric is None and WEIGHT_GOAL_LB is not None:
-            goal_numeric = WEIGHT_GOAL_LB
-
-        weight_lb = float(kg * 2.20462) if kg is not None else None
-
+    goal_numeric = WEIGHT_GOAL_LB  # Google Health exposes no weight goal
+    submitted = 0
+    for day, (utc_time, kg) in sorted(weight_by_day.items()):
+        weight_lb = float(kg * 2.20462)
         collected_records.append({
             "measurement": "Weight",
             "time": utc_time,
             "tags": {"Device": DEVICENAME},
             "fields": {
+                # 'goal' is an INTEGER in the existing InfluxDB schema; keep it int
+                # to avoid a field-type conflict. 'goal_float' carries the float.
                 "weight": weight_lb,
-                # Use the configured fallback when Google Health does not provide a goal.
-                # 'goal' is an INTEGER in the existing InfluxDB schema; keep it int to
-                # avoid a field-type conflict. 'goal_float' carries the float value.
                 "goal": int(round(goal_numeric)) if goal_numeric is not None else None,
                 "goal_float": goal_numeric,
                 "bmi": None,
-                "fat": fat_by_day.get(utc_time[:10]),
+                "fat": fat_by_day.get(day),
             },
         })
-        weight_date = utc_time[:10] if utc_time else None
-        form_data = {
-            "entry.1406463651": weight_date,
-            "entry.1062141579": weight_lb,
-        }
 
-    if GOOGLE_FORM_URL and form_data:
+        # One form row per day, at most once per addon process lifetime, so the
+        # weight schedule doesn't append duplicate rows for the same date.
+        if not GOOGLE_FORM_URL:
+            continue
+        if day in _submitted_weight_form_days:
+            logging.debug(f"Weight form: {day} already submitted this run; skipping.")
+            continue
         try:
-            resp = requests.post(GOOGLE_FORM_URL, data=form_data, timeout=60)
+            resp = requests.post(
+                GOOGLE_FORM_URL,
+                data={"entry.1406463651": day, "entry.1062141579": weight_lb},
+                timeout=60,
+            )
             resp.raise_for_status()
-            logging.info(f"Weight form submitted successfully! {start_date_str} to {end_date_str}")
+            _submitted_weight_form_days.add(day)
+            submitted += 1
+            logging.info(f"Weight form: submitted {day} = {weight_lb:.1f} lb")
         except requests.RequestException as e:
-            logging.error(f"Failed to submit the weight form: {e}")
+            logging.error(f"Weight form: failed to submit {day}: {e}")
 
-    logging.info(f"Recorded weight logs for {start_date_str} to {end_date_str}")
+    logging.info(f"Recorded weight for {len(weight_by_day)} day(s) ({sorted(weight_by_day)}); "
+                 f"form rows submitted this run: {submitted}")
 
 # %% [markdown]
 # ## Startup update / bulk update
@@ -1345,7 +1354,7 @@ if SCHEDULE_AUTO_UPDATE:
     schedule.every(6).hours.do(lambda: get_daily_data_limit_none(start_date_str, end_date_str))
     schedule.every(6).hours.do(lambda: fetch_latest_activities(end_date_str))
     schedule.every(5).hours.do(lambda: fetch_weight_logs(start_date_str, end_date_str))
-    schedule.every(20).minutes.do(get_battery_level)
+    schedule.every(5).minutes.do(get_battery_level)
 
     while True:
         schedule.run_pending()

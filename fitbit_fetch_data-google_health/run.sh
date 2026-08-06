@@ -31,10 +31,21 @@ export AUTO_DATE_RANGE=$(bashio::config 'auto_date_range')
 export AUTO_UPDATE_DATE_RANGE=$(bashio::config 'auto_update_date_range')
 export DEBUG_LOCAL=$(bashio::config 'debug_local')
 
-# Write initial Google refresh token if provided
+# Sync the Google refresh token from config into the token file.
+# Rewrite the file whenever the configured token differs from the stored one,
+# so updating refresh_token in the add-on config actually takes effect (e.g.
+# after re-consenting for new scopes). If they match, keep the file as-is so
+# any access_token the script has cached is preserved.
 REFRESH_TOKEN=$(bashio::config 'refresh_token')
-if [ ! -f "$TOKEN_FILE_PATH" ] && [ ! -z "$REFRESH_TOKEN" ]; then
-    echo "{\"refresh_token\": \"$REFRESH_TOKEN\", \"access_token\": \"\"}" > "$TOKEN_FILE_PATH"
+if [ ! -z "$REFRESH_TOKEN" ]; then
+    STORED_TOKEN=""
+    if [ -f "$TOKEN_FILE_PATH" ]; then
+        STORED_TOKEN=$(sed -n 's/.*"refresh_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$TOKEN_FILE_PATH")
+    fi
+    if [ "$STORED_TOKEN" != "$REFRESH_TOKEN" ]; then
+        echo "{\"refresh_token\": \"$REFRESH_TOKEN\", \"access_token\": \"\"}" > "$TOKEN_FILE_PATH"
+        bashio::log.info "Token file updated from config refresh_token."
+    fi
 fi
 
 # Start the Google Health Fetch Data script
