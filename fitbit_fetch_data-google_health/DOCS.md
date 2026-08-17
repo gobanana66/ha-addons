@@ -126,6 +126,9 @@ influxdb_v3_access_token: "your-v3-token"
 
 ```yaml
 local_timezone: "Automatic"  # Your local timezone (e.g., "Europe/Berlin") or "Automatic"
+auto_date_range: true        # If false, fetch a fixed range instead of "last N days"
+start_date: "2024-01-01"     # Used only when auto_date_range is false. Format: YYYY-MM-DD
+end_date: "2024-01-31"       # Used only when auto_date_range is false. Format: YYYY-MM-DD
 ```
 
 ## File Storage

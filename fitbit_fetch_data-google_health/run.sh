@@ -29,6 +29,8 @@ export WEIGHT_GOAL_LB=$(bashio::config 'weight_goal_lb')
 export LOCAL_TIMEZONE=$(bashio::config 'local_timezone')
 export AUTO_DATE_RANGE=$(bashio::config 'auto_date_range')
 export AUTO_UPDATE_DATE_RANGE=$(bashio::config 'auto_update_date_range')
+export START_DATE=$(bashio::config 'start_date')
+export END_DATE=$(bashio::config 'end_date')
 export DEBUG_LOCAL=$(bashio::config 'debug_local')
 
 # Sync the Google refresh token from config into the token file.

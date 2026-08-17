@@ -65,6 +65,8 @@ try:
     auto_update_date_range = int(os.environ.get("AUTO_UPDATE_DATE_RANGE", "1"))
 except (TypeError, ValueError):
     auto_update_date_range = 1  # Days to go back from today for AUTO_DATE_RANGE. Keep this small (<=2).
+START_DATE = os.environ.get("START_DATE", "").strip()
+END_DATE = os.environ.get("END_DATE", "").strip()
 LOCAL_TIMEZONE = os.environ.get("LOCAL_TIMEZONE") or "Automatic"
 SCHEDULE_AUTO_UPDATE = True if AUTO_DATE_RANGE else False
 SERVER_ERROR_MAX_RETRY = 3
@@ -410,7 +412,9 @@ def gh_daily_rollup(data_type, start_dt, end_dt):
     dailyRollUp is a POST with a CivilTimeInterval `range` body (NOT a filter):
       POST .../dataTypes/{type}/dataPoints:dailyRollUp
       { "range": {"start": <CivilDateTime>, "end": <CivilDateTime>},
-        "windowSizeDays": 1, "pageSize": 10000 }
+        "windowSizeDays": 1, "pageSize": <days> }
+    Constraint: windowSizeDays * pageSize must not exceed the type's max range
+    (14 or 90 days), so pageSize is sized to the number of days requested.
     Response wraps buckets under "rollupDataPoints"; each has a civilStartTime
     and a union value field (e.g. totalCalories.kcalSum). Max range 14 days for
     total-calories / active-minutes / heart-rate / calories-in-heart-rate-zone.
@@ -642,10 +646,17 @@ if AUTO_DATE_RANGE:
     end_date_str = end_date.strftime("%Y-%m-%d")
     start_date_str = start_date.strftime("%Y-%m-%d")
 else:
-    start_date_str = input("Enter start date in YYYY-MM-DD format : ")
-    end_date_str = input("Enter end date in YYYY-MM-DD format : ")
-    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+    if not START_DATE or not END_DATE:
+        logging.error("auto_date_range is disabled but start_date/end_date are not set in the addon config.")
+        sys.exit(1)
+    try:
+        start_date = datetime.strptime(START_DATE, "%Y-%m-%d")
+        end_date = datetime.strptime(END_DATE, "%Y-%m-%d")
+    except ValueError:
+        logging.error(f"start_date/end_date must be in YYYY-MM-DD format, got '{START_DATE}' and '{END_DATE}'.")
+        sys.exit(1)
+    start_date_str = START_DATE
+    end_date_str = END_DATE
 
 collected_records = []
 all_collected_records = []

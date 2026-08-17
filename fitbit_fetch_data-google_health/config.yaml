@@ -32,6 +32,9 @@ options:
   local_timezone: "Automatic"
   auto_date_range: true
   auto_update_date_range: 1
+  # Used only when auto_date_range is false. Format YYYY-MM-DD.
+  start_date: ""
+  end_date: ""
   influxdb_version: "1"
   # --- InfluxDB General ---
   influxdb_url: "http://localhost:8086" # For v2 and v3
@@ -61,6 +64,8 @@ schema:
   # Toggle automatic date range selection. When false, the addon will prompt for start/end dates via logs/input.
   auto_date_range: bool
   auto_update_date_range: int?
+  start_date: str?
+  end_date: str?
   influxdb_version: list(1|2|3)
   # --- InfluxDB General ---
   influxdb_url: url?
