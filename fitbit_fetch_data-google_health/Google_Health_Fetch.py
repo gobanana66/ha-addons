@@ -73,8 +73,19 @@ SERVER_ERROR_MAX_RETRY = 3
 EXPIRED_TOKEN_MAX_RETRY = 5
 SKIP_REQUEST_ON_SERVER_ERROR = True
 
-# Optional weight sync to a Google Form (unchanged from the original addon)
+# Optional weight and activity sync to separate Google Forms
 GOOGLE_FORM_URL = os.environ.get("GOOGLE_FORM_URL")
+GOOGLE_FORM_ACTIVITY_URL = os.environ.get("GOOGLE_FORM_ACTIVITY_URL")
+GOOGLE_FORM_ACTIVITY_ENTRIES = {
+    "date": os.environ.get("GOOGLE_FORM_ACTIVITY_DATE_ENTRY", "").strip(),
+    "name": os.environ.get("GOOGLE_FORM_ACTIVITY_NAME_ENTRY", "").strip(),
+    "duration": os.environ.get("GOOGLE_FORM_ACTIVITY_DURATION_ENTRY", "").strip(),
+    "calories": os.environ.get("GOOGLE_FORM_ACTIVITY_CALORIES_ENTRY", "").strip(),
+    "distance": os.environ.get("GOOGLE_FORM_ACTIVITY_DISTANCE_ENTRY", "").strip(),
+    "steps": os.environ.get("GOOGLE_FORM_ACTIVITY_STEPS_ENTRY", "").strip(),
+    "average_heart_rate": os.environ.get("GOOGLE_FORM_ACTIVITY_AVERAGE_HEART_RATE_ENTRY", "").strip(),
+}
+_submitted_activity_form_records = set()
 WEIGHT_GOAL_LB = os.environ.get("WEIGHT_GOAL_LB", "")
 try:
     WEIGHT_GOAL_LB = float(WEIGHT_GOAL_LB) if str(WEIGHT_GOAL_LB).strip() else None
@@ -1190,6 +1201,30 @@ def fetch_latest_activities(end_date_str, lookback_days=7, max_pages=MAX_EXERCIS
                 "tags": {"ActivityName": _first(ex, "displayName", "exerciseType", default="Workout")},
                 "fields": fields,
             })
+            activity_name = _first(ex, "displayName", "exerciseType", default="Workout")
+            activity_key = (s_start, activity_name)
+            if GOOGLE_FORM_ACTIVITY_URL and any(GOOGLE_FORM_ACTIVITY_ENTRIES.values()) and activity_key not in _submitted_activity_form_records:
+                form_values = {
+                    "date": s_dt.astimezone(LOCAL_TIMEZONE).strftime("%Y-%m-%d"),
+                    "name": activity_name,
+                    "duration": fields["ActiveDuration"] / 1000.0 if "ActiveDuration" in fields else "",
+                    "calories": fields.get("calories", ""),
+                    "distance": fields.get("distance", ""),
+                    "steps": fields.get("steps", ""),
+                    "average_heart_rate": fields.get("AverageHeartRate", ""),
+                }
+                form_data = {
+                    f"entry.{entry_id}": form_values[field]
+                    for field, entry_id in GOOGLE_FORM_ACTIVITY_ENTRIES.items()
+                    if entry_id
+                }
+                try:
+                    form_response = requests.post(GOOGLE_FORM_ACTIVITY_URL, data=form_data, timeout=60)
+                    form_response.raise_for_status()
+                    _submitted_activity_form_records.add(activity_key)
+                    logging.info(f"Activity form: submitted {activity_name} at {s_start}")
+                except requests.RequestException as e:
+                    logging.error(f"Activity form: failed to submit {activity_name} at {s_start}: {e}")
             kept += 1
         page_token = resp.get("nextPageToken")
         if not page_token:

@@ -18,5 +18,13 @@
   "start_date": "",
   "end_date": "",
   "google_form_url": "",
+  "google_form_activity_url": "",
+  "google_form_activity_date_entry": "",
+  "google_form_activity_name_entry": "",
+  "google_form_activity_duration_entry": "",
+  "google_form_activity_calories_entry": "",
+  "google_form_activity_distance_entry": "",
+  "google_form_activity_steps_entry": "",
+  "google_form_activity_average_heart_rate_entry": "",
   "weight_goal_lb": 160
 }

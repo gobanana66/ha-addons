@@ -129,7 +129,24 @@ local_timezone: "Automatic"  # Your local timezone (e.g., "Europe/Berlin") or "A
 auto_date_range: true        # If false, fetch a fixed range instead of "last N days"
 start_date: "2024-01-01"     # Used only when auto_date_range is false. Format: YYYY-MM-DD
 end_date: "2024-01-31"       # Used only when auto_date_range is false. Format: YYYY-MM-DD
+google_form_url: ""          # Optional weight Google Form submit URL
+google_form_activity_url: "" # Separate optional activity Google Form submit URL
+google_form_activity_date_entry: ""
+google_form_activity_name_entry: ""
+google_form_activity_duration_entry: ""
+google_form_activity_calories_entry: ""
+google_form_activity_distance_entry: ""
+google_form_activity_steps_entry: ""
+google_form_activity_average_heart_rate_entry: ""
 ```
+
+To append workouts to a separate response spreadsheet, set
+`google_form_activity_url` and the entry IDs for the activity questions you
+created. Weight continues to use `google_form_url`. Entry IDs are the
+numeric parts of `entry.<id>` in a Google Form prefilled link; leave any unused
+activity fields blank. Each matching workout submits one row, with duration in
+seconds and distance in kilometers. Successfully submitted workouts are not
+re-submitted during scheduled lookback runs in the same add-on process.
 
 ## File Storage
 

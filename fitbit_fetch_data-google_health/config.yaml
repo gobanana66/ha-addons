@@ -1,5 +1,5 @@
 name: "Google Health Fetch Data - Fitbit Migration"
-version: "2.0.6"
+version: "2.0.7"
 slug: "google_health_fetch_data"
 description: "Add-on to fetch Fitbit/Pixel data via the Google Health API and store it in InfluxDB"
 url: "https://gitlab.fristerspace.de/demian/fitbit-ha-addon"
@@ -7,7 +7,7 @@ arch:
   - aarch64
   - amd64
   - armhf
-  - armv7
+  - armv7fdsfas
   - i386
 startup: application
 init: false
@@ -51,6 +51,14 @@ options:
   # --- InfluxDB v3 Specific ---
   influxdb_v3_access_token: ""
   google_form_url: ""
+  google_form_activity_url: ""
+  google_form_activity_date_entry: ""
+  google_form_activity_name_entry: ""
+  google_form_activity_duration_entry: ""
+  google_form_activity_calories_entry: ""
+  google_form_activity_distance_entry: ""
+  google_form_activity_steps_entry: ""
+  google_form_activity_average_heart_rate_entry: ""
   weight_goal_lb: null
   # Local debug: fetch from Google Health but skip InfluxDB (dump to file/console)
   debug_local: true
@@ -82,5 +90,13 @@ schema:
   # --- InfluxDB v3 Specific ---
   influxdb_v3_access_token: password?
   google_form_url: url?
+  google_form_activity_url: url?
+  google_form_activity_date_entry: str?
+  google_form_activity_name_entry: str?
+  google_form_activity_duration_entry: str?
+  google_form_activity_calories_entry: str?
+  google_form_activity_distance_entry: str?
+  google_form_activity_steps_entry: str?
+  google_form_activity_average_heart_rate_entry: str?
   weight_goal_lb: float?
   debug_local: bool?
